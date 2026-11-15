@@ -130,11 +130,22 @@ export interface StressTestResult {
   points: StressTestPointResult[];
 }
 
+export interface LLMUsageReport {
+  total_requests: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  cache_hits: number;
+  cache_misses: number;
+  retries: number;
+  stages: Record<string, number>;
+}
+
 export interface IntelligenceResult {
   session_id: string;
   job_id: string;
   status: 'COMPLETED' | 'PARTIAL' | 'FAILED';
   executive_summary?: string;
+  briefing_summary?: string | null;
   sources: SourceRecord[];
   origins: SourceOriginRecord[];
   events: ExtractedEvent[];
@@ -145,6 +156,7 @@ export interface IntelligenceResult {
   stress_test?: StressTestResult | null;
   warnings: string[];
   provider_metadata?: Record<string, unknown>;
+  llm_usage?: LLMUsageReport | null;
 }
 
 export interface ResearchJob {

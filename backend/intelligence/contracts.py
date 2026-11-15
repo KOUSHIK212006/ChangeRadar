@@ -243,6 +243,22 @@ class StressTestResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Instrumentation and Usage Contracts
+# ---------------------------------------------------------------------------
+
+class LLMUsageReport(BaseModel):
+    """Summarized LLM usage metrics for auditability, telemetry, and quota management."""
+
+    total_requests: int = Field(0, description="Total physical network requests sent to LLM provider")
+    total_input_tokens: int = Field(0, description="Estimated or reported input prompt tokens")
+    total_output_tokens: int = Field(0, description="Estimated or reported output completion tokens")
+    cache_hits: int = Field(0, description="Number of requests resolved from local content cache")
+    cache_misses: int = Field(0, description="Number of requests that required model execution")
+    retries: int = Field(0, description="Number of retry attempts due to transient errors or rate limits")
+    stages: dict[str, int] = Field(default_factory=dict, description="Request count broken down by pipeline stage")
+
+
+# ---------------------------------------------------------------------------
 # Top-level engine output
 # ---------------------------------------------------------------------------
 
@@ -253,6 +269,7 @@ class IntelligenceResult(BaseModel):
     job_id: str
     status: str = Field(..., description="EngineResultStatus constant: COMPLETED | PARTIAL | FAILED")
 
+    briefing_summary: Optional[str] = Field(None, description="Executive synthesized research briefing")
     sources: list[SourceRecord] = Field(default_factory=list)
     origins: list[SourceOriginRecord] = Field(default_factory=list)
     events: list[ExtractedEvent] = Field(default_factory=list)
@@ -265,3 +282,4 @@ class IntelligenceResult(BaseModel):
 
     warnings: list[str] = Field(default_factory=list, description="Non-fatal issues encountered during the run")
     provider_metadata: dict = Field(default_factory=dict, description="Model name, search provider, run timestamp — for reproducibility")
+    llm_usage: Optional[LLMUsageReport] = Field(None, description="Centralized LLM telemetry and quota usage report")

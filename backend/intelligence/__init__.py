@@ -4,6 +4,7 @@ from intelligence.contracts import (
     BaselineClaimSnapshot,
     BaselineEventSnapshot,
     IntelligenceResult,
+    LLMUsageReport,
     ResearchBaseline,
     ResearchContext,
     ResearchRequest,
@@ -18,4 +19,5 @@ __all__ = [
     "BaselineEventSnapshot",
     "BaselineClaimSnapshot",
     "IntelligenceResult",
+    "LLMUsageReport",
 ]

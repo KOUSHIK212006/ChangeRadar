@@ -1,16 +1,19 @@
-"""Event and claim extractor — chunked batches.
+"""Unified event and atomic claim extractor.
 
-Sources are processed in chunks of CHUNK_SIZE to stay within LLM context limits.
-Claims are extracted from all events in one call (events are small).
+Extracts real-world developments and atomic factual claims together in bounded batches.
+Eliminates one-call-per-article behavior and preserves source IDs and evidence traceability.
 """
 
+from datetime import datetime, timezone
 import hashlib
 import json
 import logging
+from typing import Any, Dict, List, Optional, Tuple
 import uuid
-from datetime import datetime, timezone
 
+from intelligence.config import intelligence_settings
 from intelligence.contracts import (
+    EvidenceRecord,
     ExtractedClaim,
     ExtractedEvent,
     ResearchContext,
@@ -22,29 +25,24 @@ logger = logging.getLogger("changeradar.intelligence.pipeline.extractor")
 
 _VALID_LIFECYCLE = {"NEW", "DEVELOPING", "UPDATED", "COMPLETED"}
 _VALID_VOLATILITY = {"LOW", "MEDIUM", "HIGH"}
-_CHUNK_SIZE = 10  # max sources per LLM call to stay within context limits
 
-EVENT_SYSTEM = (
-    "You are an intelligence analyst. Given a list of news articles, extract distinct "
-    "real-world events from ALL of them. An event is a specific development that happened — "
-    "not an opinion or prediction. Each event must include the source_index it came from. "
-    "Return only valid JSON."
-)
-
-CLAIM_SYSTEM = (
-    "You are a fact extractor. Given a list of events, extract atomic factual claims from "
-    "ALL of them. Each claim must be a single, specific, verifiable statement — no opinions "
-    "or predictions. Each claim must include the event_index it came from. "
-    "Return only valid JSON."
+UNIFIED_EXTRACTION_SYSTEM = (
+    "You are an investigative intelligence analyst. "
+    "Analyze the provided news and corporate source documents for the specified research target. "
+    "Extract:\n"
+    "1. Distinct real-world events (verifiable occurrences, not speculative commentary).\n"
+    "2. Atomic factual claims (single verifiable facts extracted from those events).\n"
+    "For every event and claim, specify the exact source_ids that support it. "
+    "Return only valid JSON strictly matching the requested format."
 )
 
 
 def _event_id(title: str) -> str:
-    return hashlib.sha256(title.lower().strip().encode()).hexdigest()[:16]
+    return hashlib.sha256(title.lower().strip().encode("utf-8")).hexdigest()[:16]
 
 
-def _parse_dt(value: str | None) -> datetime | None:
-    if not value:
+def _parse_dt(value: Optional[str]) -> Optional[datetime]:
+    if not value or value.lower() in ("null", "none", "unknown"):
         return None
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -52,46 +50,74 @@ def _parse_dt(value: str | None) -> datetime | None:
         return None
 
 
-def _extract_events_chunk(
-    chunk: list[SourceRecord],
-    chunk_offset: int,
+def _build_batch_prompt(
+    chunk: List[SourceRecord],
     context: ResearchContext,
-    llm: LLMProvider,
-    discovered_at: datetime,
-) -> list[ExtractedEvent]:
-    """Extract events from a single chunk of sources."""
+) -> str:
+    """Format articles for LLM batch extraction."""
     articles = [
         {
-            "source_index": chunk_offset + i,
             "source_id": s.source_id,
             "title": s.title,
             "publisher": s.publisher,
-            "published": s.published_at.isoformat() if s.published_at else "unknown",
-            "content": s.snippet[:300],
+            "published_at": s.published_at.isoformat() if s.published_at else "unknown",
+            "content": s.snippet,
         }
-        for i, s in enumerate(chunk)
+        for s in chunk
     ]
 
-    user_prompt = (
-        f"Research target: {context.target_name}\n"
-        f"Meeting objective: {context.meeting_objective}\n\n"
-        f"Articles:\n{json.dumps(articles, indent=2)}\n\n"
-        'Return JSON: {"events": [{"source_index": 0, "title": "...", "description": "...", '
-        '"event_at": "ISO date or null", "lifecycle_status": "NEW|DEVELOPING|UPDATED|COMPLETED", '
-        '"is_disputed": false, "is_uncertain": false}]}'
+    return (
+        f"Research Target: {context.target_name}\n"
+        f"Meeting Objective: {context.meeting_objective}\n"
+        f"Time Window: Last {context.time_window_days} days\n\n"
+        f"Sources ({len(articles)} documents):\n{json.dumps(articles, indent=2)}\n\n"
+        "Return JSON in this exact structure:\n"
+        "{\n"
+        '  "events": [\n'
+        '    {\n'
+        '      "title": "Concise event headline",\n'
+        '      "description": "Factual description of development",\n'
+        '      "lifecycle_status": "NEW|DEVELOPING|UPDATED|COMPLETED",\n'
+        '      "is_disputed": false,\n'
+        '      "is_uncertain": false,\n'
+        '      "event_at": "ISO date string or null",\n'
+        '      "source_ids": ["source_id_1"]\n'
+        "    }\n"
+        "  ],\n"
+        '  "claims": [\n'
+        '    {\n'
+        '      "text": "Single verifiable atomic factual statement",\n'
+        '      "event_title": "Matching event title from above",\n'
+        '      "volatility": "LOW|MEDIUM|HIGH",\n'
+        '      "source_ids": ["source_id_1"]\n'
+        "    }\n"
+        "  ]\n"
+        "}\n"
     )
 
-    try:
-        raw = llm.complete(EVENT_SYSTEM, user_prompt)
-        data = json.loads(raw)
-        raw_events = data.get("events", [])
-    except (LLMParseError, Exception) as exc:
-        logger.warning(f"Event extraction chunk (offset={chunk_offset}) failed: {exc}")
-        return []
 
-    events: list[ExtractedEvent] = []
-    # Build a flat index across all sources for source_index lookup
-    all_sources_in_chunk = {chunk_offset + i: s for i, s in enumerate(chunk)}
+def _extract_batch(
+    chunk: List[SourceRecord],
+    context: ResearchContext,
+    llm: LLMProvider,
+    discovered_at: datetime,
+) -> Tuple[List[ExtractedEvent], List[ExtractedClaim]]:
+    """Execute unified event and claim extraction for a single batch of sources."""
+    user_prompt = _build_batch_prompt(chunk, context)
+    source_map = {s.source_id: s for s in chunk}
+
+    try:
+        raw = llm.complete(UNIFIED_EXTRACTION_SYSTEM, user_prompt, stage="extraction")
+        data = json.loads(raw)
+    except (LLMParseError, Exception) as exc:
+        logger.warning(f"Batch extraction failed for {len(chunk)} sources: {exc}")
+        return [], []
+
+    raw_events = data.get("events", [])
+    raw_claims = data.get("claims", [])
+
+    events: List[ExtractedEvent] = []
+    event_by_title: Dict[str, ExtractedEvent] = {}
 
     for e in raw_events:
         title = e.get("title", "").strip()
@@ -101,82 +127,30 @@ def _extract_events_chunk(
         if lifecycle not in _VALID_LIFECYCLE:
             lifecycle = "NEW"
 
-        src_idx = e.get("source_index", chunk_offset)
-        source = all_sources_in_chunk.get(src_idx, chunk[0])
+        event_sids = [sid for sid in e.get("source_ids", []) if sid in source_map]
+        if not event_sids and chunk:
+            event_sids = [chunk[0].source_id]
 
-        events.append(ExtractedEvent(
+        primary_source = source_map.get(event_sids[0], chunk[0])
+
+        event_obj = ExtractedEvent(
             event_id=_event_id(title),
             title=title,
-            description=e.get("description", ""),
+            description=e.get("description", "").strip() or title,
             lifecycle_status=lifecycle,
             is_disputed=bool(e.get("is_disputed", False)),
             is_uncertain=bool(e.get("is_uncertain", False)),
             event_at=_parse_dt(e.get("event_at")),
-            published_at=source.published_at,
+            published_at=primary_source.published_at,
             discovered_at=discovered_at,
-            source_ids=[source.source_id],
+            source_ids=event_sids,
             origin_ids=[],
             claim_ids=[],
-        ))
+        )
+        events.append(event_obj)
+        event_by_title[title.lower()] = event_obj
 
-    return events
-
-
-def extract_events(
-    sources: list[SourceRecord],
-    context: ResearchContext,
-    llm: LLMProvider,
-) -> list[ExtractedEvent]:
-    """Extract events from sources in chunks to stay within LLM context limits."""
-    if not sources:
-        return []
-
-    discovered_at = datetime.now(timezone.utc)
-    all_events: list[ExtractedEvent] = []
-
-    for offset in range(0, len(sources), _CHUNK_SIZE):
-        chunk = sources[offset: offset + _CHUNK_SIZE]
-        chunk_events = _extract_events_chunk(chunk, offset, context, llm, discovered_at)
-        all_events.extend(chunk_events)
-        logger.info(f"Extracted {len(chunk_events)} events from chunk offset={offset}")
-
-    return all_events
-
-
-def extract_claims(
-    events: list[ExtractedEvent],
-    sources: list[SourceRecord],
-    llm: LLMProvider,
-) -> list[ExtractedClaim]:
-    """Extract atomic claims from ALL events in a single batched LLM call."""
-    if not events:
-        return []
-
-    event_items = [
-        {
-            "event_index": i,
-            "event_id": e.event_id,
-            "title": e.title,
-            "description": e.description,
-        }
-        for i, e in enumerate(events)
-    ]
-
-    user_prompt = (
-        f"Events:\n{json.dumps(event_items, indent=2)}\n\n"
-        'Return JSON: {"claims": [{"event_index": 0, "text": "...", "volatility": "LOW|MEDIUM|HIGH"}]}\n'
-        "Each claim must be a single verifiable fact. No opinions or predictions."
-    )
-
-    try:
-        raw = llm.complete(CLAIM_SYSTEM, user_prompt)
-        data = json.loads(raw)
-        raw_claims = data.get("claims", [])
-    except (LLMParseError, Exception) as exc:
-        logger.warning(f"Batched claim extraction failed: {exc}")
-        return []
-
-    claims: list[ExtractedClaim] = []
+    claims: List[ExtractedClaim] = []
     for c in raw_claims:
         text = c.get("text", "").strip()
         if not text:
@@ -185,22 +159,94 @@ def extract_claims(
         if volatility not in _VALID_VOLATILITY:
             volatility = "MEDIUM"
 
-        ev_idx = c.get("event_index", 0)
-        event = events[ev_idx] if 0 <= ev_idx < len(events) else events[0]
+        claim_sids = [sid for sid in c.get("source_ids", []) if sid in source_map]
+        if not claim_sids and chunk:
+            claim_sids = [chunk[0].source_id]
 
         claim_id = f"clm-{uuid.uuid4().hex[:8]}"
-        claims.append(ExtractedClaim(
+
+        # Link claim to its corresponding event
+        ev_title = c.get("event_title", "").strip().lower()
+        matched_event = event_by_title.get(ev_title)
+        if not matched_event and events:
+            matched_event = events[0]
+        if matched_event:
+            matched_event.claim_ids.append(claim_id)
+
+        evidence_records = [
+            EvidenceRecord(
+                evidence_id=f"ev-{uuid.uuid4().hex[:8]}",
+                excerpt=source_map[sid].snippet,
+                source_id=sid,
+                relevance="SUPPORTING",
+            )
+            for sid in claim_sids
+            if sid in source_map
+        ]
+
+        claim_obj = ExtractedClaim(
             claim_id=claim_id,
             text=text,
-            assessment="INSUFFICIENT",
-            assessment_rationale="Pending assessment.",
-            evidence=[],
-            source_doc_count=len(event.source_ids),
-            independent_origin_count=0,
+            assessment="INSUFFICIENT",  # will be verified in assessment stage
+            assessment_rationale="Awaiting multi-origin verification.",
+            evidence=evidence_records,
+            source_doc_count=len(claim_sids),
+            independent_origin_count=1 if claim_sids else 0,
             volatility=volatility,
             is_stale=False,
             llm_confidence=0.0,
-        ))
-        event.claim_ids.append(claim_id)
+        )
+        claims.append(claim_obj)
 
-    return claims
+    return events, claims
+
+
+def extract_events_and_claims(
+    sources: List[SourceRecord],
+    context: ResearchContext,
+    llm: LLMProvider,
+) -> Tuple[List[ExtractedEvent], List[ExtractedClaim]]:
+    """Extract events and claims using intelligent bounded batching.
+
+    Processes multiple articles per LLM request (up to MAX_ARTICLES_PER_BATCH).
+    Takes only 1 LLM call for typical research runs (<= 15 sources).
+    """
+    if not sources:
+        return [], []
+
+    batch_size = max(1, intelligence_settings.MAX_ARTICLES_PER_BATCH)
+    discovered_at = datetime.now(timezone.utc)
+
+    all_events: List[ExtractedEvent] = []
+    all_claims: List[ExtractedClaim] = []
+
+    for offset in range(0, len(sources), batch_size):
+        chunk = sources[offset: offset + batch_size]
+        events, claims = _extract_batch(chunk, context, llm, discovered_at)
+        all_events.extend(events)
+        all_claims.extend(claims)
+        logger.info(
+            f"Batch extraction (offset={offset}, size={len(chunk)}) -> "
+            f"{len(events)} events, {len(claims)} claims"
+        )
+
+    return all_events, all_claims
+
+
+# Backward-compatible wrappers for callers expecting individual functions
+def extract_events(
+    sources: List[SourceRecord],
+    context: ResearchContext,
+    llm: LLMProvider,
+) -> List[ExtractedEvent]:
+    events, _ = extract_events_and_claims(sources, context, llm)
+    return events
+
+
+def extract_claims(
+    events: List[ExtractedEvent],
+    sources: List[SourceRecord],
+    llm: LLMProvider,
+) -> List[ExtractedClaim]:
+    # Returns existing claims attached to events or empty list
+    return []

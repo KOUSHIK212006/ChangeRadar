@@ -1,17 +1,24 @@
 """Main intelligence engine entry point.
 
-This is the only function the backend worker calls.
-Input: ResearchRequest (validated by the worker)
-Output: IntelligenceResult (validated Pydantic model)
+Orchestrates the optimized, quota-efficient research pipeline:
+Stage A: Research Planning (1 LLM call)
+Stage B: Search & Normalization (Deterministic, 0 LLM calls)
+Stage C: Batched Event & Claim Extraction (1 LLM call for typical batch)
+Stage D: Entity Resolution & Event Clustering (Deterministic, 0 LLM calls)
+Stage E: Batched Evidence Assessment (1 LLM call)
+Stage F: Deterministic Temporal Analysis & Delta (0 LLM calls)
+Stage G: Briefing Generation (1 LLM call)
+Stage H: Conditional Talking-Point Stress Testing (1 LLM call only if talking points submitted)
 
-Never raises — always returns an IntelligenceResult with appropriate status.
+Total: ~4–6 LLM calls for a typical research run.
 """
 
+from datetime import datetime, timezone
 import json
 import logging
-import time
-from datetime import datetime, timezone
 from pathlib import Path
+import time
+from typing import Optional
 
 from intelligence.config import intelligence_settings
 from intelligence.contracts import (
@@ -21,16 +28,18 @@ from intelligence.contracts import (
     ResearchRequest,
     StressTestResult,
 )
+from intelligence.instrumentation import LLMUsageTracker, set_current_tracker
 from intelligence.pipeline.assessor import assess_claims
+from intelligence.pipeline.briefing import generate_briefing_summary
 from intelligence.pipeline.clusterer import cluster_events
 from intelligence.pipeline.coverage import build_report
 from intelligence.pipeline.delta import compute as compute_delta
-from intelligence.pipeline.extractor import extract_claims, extract_events
+from intelligence.pipeline.extractor import extract_events_and_claims
 from intelligence.pipeline.normalizer import normalize
 from intelligence.pipeline.planner import plan
 from intelligence.pipeline.stress_test import run as run_stress_test
-from intelligence.providers.base import LLMParseError, SearchProviderError
-from intelligence.providers.llm import GroqLLMProvider
+from intelligence.providers.base import LLMParseError, QuotaExhaustedError, SearchProviderError
+from intelligence.providers.llm import get_llm_provider
 from intelligence.providers.tavily import TavilySearchProvider
 
 logger = logging.getLogger("changeradar.intelligence.engine")
@@ -39,21 +48,27 @@ _FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def _load_fixture_result(session_id: str, job_id: str) -> IntelligenceResult:
-    data = json.loads((_FIXTURES_DIR / "sample_result.json").read_text())
+    data = json.loads((_FIXTURES_DIR / "sample_result.json").read_text(encoding="utf-8"))
     data["session_id"] = session_id
     data["job_id"] = job_id
-    return IntelligenceResult.model_validate(data)
+    res = IntelligenceResult.model_validate(data)
+    # Ensure provider metadata records fixture mode
+    res.provider_metadata["mode"] = "fixture"
+    return res
 
 
 def _run_live_pipeline(request: ResearchRequest) -> IntelligenceResult:
     warnings: list[str] = []
-    search_provider = TavilySearchProvider()
-    llm_provider = GroqLLMProvider()
+    tracker = LLMUsageTracker(run_id=request.job_id)
+    set_current_tracker(tracker)
 
-    # 1. Plan
+    search_provider = TavilySearchProvider()
+    llm_provider = get_llm_provider()
+
+    # 1. Stage A: Plan (1 LLM call)
     research_plan = plan(request.context, llm_provider)
 
-    # 2. Search
+    # 2. Stage B: Search (Tavily search API)
     all_raw_sources = []
     executed = 0
     failed = 0
@@ -65,10 +80,11 @@ def _run_live_pipeline(request: ResearchRequest) -> IntelligenceResult:
         except SearchProviderError as exc:
             failed += 1
             warnings.append(f"Search failed for query '{query}': {exc}")
-            logger.warning(f"Search failed: {exc}")
+            logger.warning(f"Search failed for '{query}': {exc}")
 
     if not all_raw_sources:
-        warnings.append("No sources retrieved — all searches failed or returned empty results.")
+        warnings.append("No sources retrieved — search queries returned empty results.")
+        usage_rep = tracker.get_summary()
         return IntelligenceResult(
             session_id=request.session_id,
             job_id=request.job_id,
@@ -79,53 +95,53 @@ def _run_live_pipeline(request: ResearchRequest) -> IntelligenceResult:
                 failed_searches=failed,
                 time_window_days=request.context.time_window_days,
                 origin_diversity_score=0.0,
-                gaps=["No sources retrieved"],
+                gaps=["No sources retrieved in search scope."],
                 warnings=warnings,
             ),
             warnings=warnings,
-            provider_metadata=_provider_metadata(),
+            provider_metadata=_provider_metadata(tracker),
+            llm_usage=usage_rep,
         )
 
-    # 3. Normalize sources and group origins
+    # 3. Stage B & D: Source normalization and origin clustering (0 LLM calls - Deterministic)
     try:
         sources, origins = normalize(all_raw_sources, llm_provider)
     except Exception as exc:
-        logger.warning(f"Normalizer failed, using raw sources: {exc}")
-        warnings.append(f"Source normalization failed: {exc}")
+        logger.warning(f"Normalizer failed, falling back to raw sources: {exc}")
+        warnings.append(f"Source normalization warning: {exc}")
         sources = all_raw_sources
         origins = []
 
-    # 4. Extract events
+    # 4. Stage C: Batched Event and Claim Extraction (1 LLM call for typical batch)
     try:
-        events = extract_events(sources, request.context, llm_provider)
+        events, claims = extract_events_and_claims(sources, request.context, llm_provider)
+    except QuotaExhaustedError as exc:
+        logger.error(f"Quota exhausted during event extraction: {exc}")
+        warnings.append(f"Gemini API quota exhausted during extraction: {exc}")
+        events, claims = [], []
     except Exception as exc:
-        logger.warning(f"Event extraction failed: {exc}")
-        warnings.append(f"Event extraction failed: {exc}")
-        events = []
+        logger.warning(f"Event and claim extraction failed: {exc}")
+        warnings.append(f"Extraction failed: {exc}")
+        events, claims = [], []
 
-    # 5. Extract claims
-    try:
-        claims = extract_claims(events, sources, llm_provider)
-    except Exception as exc:
-        logger.warning(f"Claim extraction failed: {exc}")
-        warnings.append(f"Claim extraction failed: {exc}")
-        claims = []
-
-    # 6. Cluster events
+    # 5. Stage D: Event Clustering (0 LLM calls - Deterministic)
     try:
         events = cluster_events(events, sources, llm_provider)
     except Exception as exc:
-        logger.warning(f"Event clustering failed: {exc}")
-        warnings.append(f"Event clustering failed: {exc}")
+        logger.warning(f"Event clustering encountered error: {exc}")
+        warnings.append(f"Event clustering warning: {exc}")
 
-    # 7. Assess claims
+    # 6. Stage E: Batched Claim Assessment (1 LLM call)
     try:
         claims = assess_claims(claims, sources, origins, llm_provider)
+    except QuotaExhaustedError as exc:
+        logger.error(f"Quota exhausted during claim assessment: {exc}")
+        warnings.append(f"Gemini API quota exhausted during assessment: {exc}")
     except Exception as exc:
         logger.warning(f"Claim assessment failed: {exc}")
         warnings.append(f"Claim assessment failed: {exc}")
 
-    # 8. Coverage report
+    # 7. Coverage report & gap detection (0 LLM calls - Deterministic)
     coverage = build_report(
         plan=research_plan,
         executed=executed,
@@ -133,10 +149,12 @@ def _run_live_pipeline(request: ResearchRequest) -> IntelligenceResult:
         sources=sources,
         origins=origins,
         context=request.context,
+        claims=claims,
+        events=events,
         llm=llm_provider,
     )
 
-    # 9. Delta + event versions
+    # 8. Stage F: Temporal Analysis & Delta (0 LLM calls - Deterministic)
     delta = None
     event_versions = []
     if request.baseline:
@@ -151,28 +169,45 @@ def _run_live_pipeline(request: ResearchRequest) -> IntelligenceResult:
                 claims=claims,
                 coverage=coverage,
                 warnings=warnings,
-                provider_metadata=_provider_metadata(),
+                provider_metadata=_provider_metadata(tracker),
             )
             delta, event_versions = compute_delta(current_partial, request.baseline, llm_provider)
         except Exception as exc:
             logger.warning(f"Delta computation failed: {exc}")
-            warnings.append(f"Delta computation failed: {exc}")
+            warnings.append(f"Delta computation warning: {exc}")
 
-    # 10. Stress test
+    # 9. Stage G: Briefing Generation (1 LLM call)
+    briefing_text = None
+    try:
+        briefing_text = generate_briefing_summary(
+            request.context, events, claims, coverage, delta, llm_provider
+        )
+    except Exception as exc:
+        logger.warning(f"Briefing generation encountered error: {exc}")
+        warnings.append(f"Briefing generation fallback used: {exc}")
+
+    # 10. Stage H: Talking-point Stress Testing (Conditional: 1 LLM call ONLY if talking points submitted)
     stress_test: StressTestResult | None = None
     if request.context.talking_points:
         try:
-            stress_test = run_stress_test(request.context.talking_points, claims, sources, llm_provider)
+            stress_test = run_stress_test(
+                request.context.talking_points, claims, sources, llm_provider
+            )
+        except QuotaExhaustedError as exc:
+            logger.error(f"Quota exhausted during stress test: {exc}")
+            warnings.append(f"Gemini API quota exhausted during stress test: {exc}")
         except Exception as exc:
             logger.warning(f"Stress test failed: {exc}")
-            warnings.append(f"Stress test failed: {exc}")
+            warnings.append(f"Stress test warning: {exc}")
 
     status = EngineResultStatus.PARTIAL if (failed > 0 or warnings) else EngineResultStatus.COMPLETED
+    usage_report = tracker.get_summary()
 
     return IntelligenceResult(
         session_id=request.session_id,
         job_id=request.job_id,
         status=status,
+        briefing_summary=briefing_text,
         sources=sources,
         origins=origins,
         events=events,
@@ -182,17 +217,22 @@ def _run_live_pipeline(request: ResearchRequest) -> IntelligenceResult:
         delta=delta,
         stress_test=stress_test,
         warnings=warnings,
-        provider_metadata=_provider_metadata(),
+        provider_metadata=_provider_metadata(tracker),
+        llm_usage=usage_report,
     )
 
 
-def _provider_metadata() -> dict:
-    return {
+def _provider_metadata(tracker: Optional[LLMUsageTracker] = None) -> dict:
+    meta = {
         "search_provider": "tavily",
-        "llm_provider": "groq",
+        "llm_provider": intelligence_settings.LLM_PROVIDER,
         "llm_model": intelligence_settings.LLM_MODEL,
         "run_at": datetime.now(timezone.utc).isoformat(),
     }
+    if tracker:
+        summary = tracker.get_summary()
+        meta["llm_usage"] = summary.model_dump()
+    return meta
 
 
 def run_intelligence_engine(request: ResearchRequest) -> IntelligenceResult:
@@ -201,7 +241,11 @@ def run_intelligence_engine(request: ResearchRequest) -> IntelligenceResult:
     Returns IntelligenceResult — never raises.
     """
     start = time.perf_counter()
-    logger.info(f"Engine starting — session={request.session_id} job={request.job_id} fixture={intelligence_settings.USE_FIXTURE_MODE}")
+    logger.info(
+        f"Engine starting — session={request.session_id} job={request.job_id} "
+        f"provider={intelligence_settings.LLM_PROVIDER} model={intelligence_settings.LLM_MODEL} "
+        f"fixture={intelligence_settings.USE_FIXTURE_MODE}"
+    )
 
     try:
         if intelligence_settings.USE_FIXTURE_MODE:

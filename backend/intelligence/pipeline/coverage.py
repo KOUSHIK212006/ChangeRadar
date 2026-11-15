@@ -1,101 +1,102 @@
-"""Coverage report builder.
+"""Coverage report builder — deterministic research audit and gap analysis.
 
-Computes search coverage statistics and uses LLM to identify topic gaps.
+Calculates search coverage statistics, origin diversity scores, source type breakdown,
+and detects uncovered research questions without LLM call overhead.
 """
 
-import json
-import logging
+from typing import List, Optional, Set
 
 from intelligence.contracts import (
     CoverageReport,
+    ExtractedClaim,
+    ExtractedEvent,
     ResearchContext,
     SourceOriginRecord,
     SourceRecord,
 )
 from intelligence.pipeline.planner import ResearchPlan
-from intelligence.providers.base import LLMParseError, LLMProvider
+from intelligence.providers.base import LLMProvider
 
-logger = logging.getLogger("changeradar.intelligence.pipeline.coverage")
-
-GAP_SYSTEM = (
-    "You are a research analyst. Given a list of research questions and retrieved sources, "
-    "identify which questions or topics were not adequately addressed. "
-    "Return only valid JSON."
-)
+PRESS_RELEASE_DOMAINS = {"businesswire", "prnewswire", "globenewswire", "accesswire"}
+FILING_DOMAINS = {"sec.gov", "edgar", "regulatory", "filing"}
 
 
-def _origin_diversity_score(origins: list[SourceOriginRecord]) -> float:
+def _origin_diversity_score(origins: List[SourceOriginRecord]) -> float:
     if not origins:
         return 0.0
     independent = sum(1 for o in origins if o.is_independent)
     return round(independent / len(origins), 2)
 
 
-def _source_types(sources: list[SourceRecord]) -> list[str]:
-    """Infer rough source types from publisher names."""
-    types: set[str] = set()
-    press_release_keywords = {"businesswire", "prnewswire", "globenewswire", "accesswire"}
-    filing_keywords = {"sec.gov", "edgar", "regulatory"}
+def _source_types(sources: List[SourceRecord]) -> List[str]:
+    types: Set[str] = set()
     for s in sources:
         pub = s.publisher.lower()
-        if any(k in pub for k in press_release_keywords):
+        url = s.url.lower()
+        if any(k in pub or k in url for k in PRESS_RELEASE_DOMAINS):
             types.add("press_release")
-        elif any(k in pub for k in filing_keywords):
+        elif any(k in pub or k in url for k in FILING_DOMAINS):
             types.add("filing")
         else:
             types.add("news")
-    return sorted(types)
+    return sorted(list(types))
 
 
-def _detect_gaps(
+def _detect_gaps_deterministic(
     context: ResearchContext,
-    sources: list[SourceRecord],
-    llm: LLMProvider,
-) -> list[str]:
+    claims: List[ExtractedClaim],
+    events: List[ExtractedEvent],
+) -> List[str]:
+    """Identify research questions that lack matching evidence in extracted claims or events."""
     if not context.research_questions:
         return []
 
-    source_summaries = [
-        {"title": s.title, "snippet": s.snippet[:200]}
-        for s in sources[:20]
-    ]
-    user_prompt = (
-        f"Research questions:\n{json.dumps(context.research_questions)}\n\n"
-        f"Sources retrieved:\n{json.dumps(source_summaries, indent=2)}\n\n"
-        'Return JSON: {"gaps": ["question or topic not covered", ...]}\n'
-        "Only list questions that were genuinely not addressed by the sources."
-    )
+    claims_text = " ".join(c.text.lower() for c in claims)
+    events_text = " ".join((e.title + " " + e.description).lower() for e in events)
+    all_corpus = f"{claims_text} {events_text}"
 
-    try:
-        raw = llm.complete(GAP_SYSTEM, user_prompt)
-        data = json.loads(raw)
-        return data.get("gaps", [])
-    except (LLMParseError, Exception) as exc:
-        logger.warning(f"Gap detection failed: {exc}")
-        return []
+    gaps: List[str] = []
+    stop_words = {"what", "is", "the", "are", "their", "in", "of", "and", "to", "a", "for", "on", "how"}
+
+    for question in context.research_questions:
+        # Extract meaningful query keywords
+        tokens = [w.lower().strip("?,.") for w in question.split() if w.lower().strip("?,.") not in stop_words]
+        if not tokens:
+            continue
+        # If less than half of distinctive question tokens appear in findings, flag as gap
+        matched = sum(1 for t in tokens if t in all_corpus)
+        if matched < max(1, len(tokens) // 2):
+            gaps.append(f"Insufficient source evidence retrieved for question: '{question}'")
+
+    return gaps
 
 
 def build_report(
     plan: ResearchPlan,
     executed: int,
     failed: int,
-    sources: list[SourceRecord],
-    origins: list[SourceOriginRecord],
+    sources: List[SourceRecord],
+    origins: List[SourceOriginRecord],
     context: ResearchContext,
-    llm: LLMProvider,
+    claims: Optional[List[ExtractedClaim]] = None,
+    events: Optional[List[ExtractedEvent]] = None,
+    llm: Optional[LLMProvider] = None,
 ) -> CoverageReport:
-    warnings: list[str] = []
+    """Build research coverage report deterministically."""
+    warnings: List[str] = []
 
     if not sources:
-        warnings.append("No sources retrieved.")
+        warnings.append("No sources retrieved — search scope may be too narrow.")
     if failed > 0:
-        warnings.append(f"{failed} search(es) failed.")
+        warnings.append(f"{failed} of {len(plan.queries)} planned searches failed.")
 
     independent_origins = [o for o in origins if o.is_independent]
     if origins and len(independent_origins) <= 1:
-        warnings.append("All sources may originate from a single origin — treat as 1 independent confirmation.")
+        warnings.append(
+            "All sources originate from a single editorial origin — treat as 1 independent confirmation."
+        )
 
-    gaps = _detect_gaps(context, sources, llm)
+    gaps = _detect_gaps_deterministic(context, claims or [], events or [])
 
     return CoverageReport(
         planned_searches=len(plan.queries),

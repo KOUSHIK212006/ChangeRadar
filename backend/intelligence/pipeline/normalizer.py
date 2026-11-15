@@ -1,153 +1,187 @@
-"""Source normalizer — deduplication, syndication detection, and origin grouping.
+"""Source normalizer — deterministic deduplication, syndication detection, and origin grouping.
 
-Steps:
-1. Deduplicate by canonical_url — keep first occurrence.
-2. Detect syndicated sources via LLM batch call.
-3. Group sources into origin clusters via LLM.
+Rules (Stage B & D):
+- NO LLM calls for URL normalization, date parsing, metadata extraction, or exact duplicate detection.
+- Deterministic origin clustering using URL, title, publisher, and content similarity.
+- Distinguishes independent investigative outlets from syndicated wire copies.
+- Preserves source IDs, publisher metadata, URLs, and timestamps.
 """
 
+from datetime import datetime
 import hashlib
-import json
-import logging
-import time
+import re
+from typing import List, Set, Tuple
+from urllib.parse import urlparse
 
 from intelligence.contracts import SourceOriginRecord, SourceRecord
-from intelligence.providers.base import LLMParseError, LLMProvider
+from intelligence.providers.base import LLMProvider
 
-logger = logging.getLogger("changeradar.intelligence.pipeline.normalizer")
-
-_SYNDICATION_CHUNK = 20   # max sources per syndication LLM call
-_ORIGIN_CHUNK = 20        # max sources per origin grouping LLM call
-_INTER_CALL_SLEEP = 2     # seconds between consecutive LLM calls to avoid 429
+PRESS_RELEASE_DOMAINS = {
+    "businesswire.com",
+    "prnewswire.com",
+    "globenewswire.com",
+    "accesswire.com",
+    "prweb.com",
+    "marketwire.com",
+}
 
 
 def _origin_id(label: str) -> str:
-    return hashlib.sha256(label.encode()).hexdigest()[:16]
+    """Stable SHA-256 origin identifier."""
+    return hashlib.sha256(label.strip().lower().encode("utf-8")).hexdigest()[:16]
 
 
-def _deduplicate(sources: list[SourceRecord]) -> list[SourceRecord]:
-    seen: set[str] = set()
-    unique: list[SourceRecord] = []
+def _clean_title(title: str) -> str:
+    """Normalize title for text similarity comparison."""
+    # Remove publisher suffixes (e.g., " | Reuters", " - Bloomberg", " — BusinessWire")
+    cleaned = re.sub(r"\s*[-|—–]\s*[A-Za-z0-9\s.]+$", "", title)
+    # Remove non-alphanumeric characters
+    cleaned = re.sub(r"[^\w\s]", "", cleaned.lower())
+    return " ".join(cleaned.split())
+
+
+def _title_similarity(t1: str, t2: str) -> float:
+    """Jaccard similarity on word tokens."""
+    words1 = set(_clean_title(t1).split())
+    words2 = set(_clean_title(t2).split())
+    if not words1 or not words2:
+        return 0.0
+    intersection = len(words1 & words2)
+    union = len(words1 | words2)
+    return intersection / union
+
+
+def _get_domain(url: str) -> str:
+    """Extract registered domain from URL."""
+    try:
+        netloc = urlparse(url).netloc.lower()
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+        return netloc
+    except Exception:
+        return ""
+
+
+def _deduplicate(sources: List[SourceRecord]) -> List[SourceRecord]:
+    """Deduplicate sources strictly by canonical_url."""
+    seen: Set[str] = set()
+    unique: List[SourceRecord] = []
     for s in sources:
-        if s.canonical_url not in seen:
-            seen.add(s.canonical_url)
+        canon = s.canonical_url.strip().rstrip("/")
+        if canon not in seen:
+            seen.add(canon)
             unique.append(s)
     return unique
 
 
-def _detect_syndication(sources: list[SourceRecord], llm: LLMProvider) -> list[SourceRecord]:
-    if len(sources) < 2:
-        return sources
+def _detect_syndication_and_origins(
+    sources: List[SourceRecord],
+) -> Tuple[List[SourceRecord], List[SourceOriginRecord]]:
+    """Deterministically cluster sources into origin groups and identify syndicated republications."""
+    if not sources:
+        return [], []
 
-    syndicated_ids: dict[str, float] = {}
+    # Identify PR wires
+    pr_wire_sources: List[SourceRecord] = []
+    other_sources: List[SourceRecord] = []
 
-    for offset in range(0, len(sources), _SYNDICATION_CHUNK):
-        chunk = sources[offset: offset + _SYNDICATION_CHUNK]
-        items = [{"source_id": s.source_id, "title": s.title, "snippet": s.snippet[:200]} for s in chunk]
-        system = (
-            "You are a source analyst. Identify which news articles appear to be republications "
-            "of the same original story (syndicated content). Be conservative — only group when "
-            "the content is clearly the same story. Return only valid JSON."
+    for s in sources:
+        domain = _get_domain(s.url)
+        is_pr_domain = any(prd in domain for prd in PRESS_RELEASE_DOMAINS)
+        is_pr_title = "press release" in s.title.lower() or "official release" in s.title.lower()
+        if is_pr_domain or is_pr_title:
+            pr_wire_sources.append(s)
+        else:
+            other_sources.append(s)
+
+    syndicated_ids: Set[str] = set()
+    origins: List[SourceOriginRecord] = []
+    assigned_source_ids: Set[str] = set()
+
+    # 1. Group Press Release Wires by title similarity
+    used_pr_indices: Set[int] = set()
+    for i, pr1 in enumerate(pr_wire_sources):
+        if i in used_pr_indices:
+            continue
+        cluster = [pr1]
+        used_pr_indices.add(i)
+
+        for j in range(i + 1, len(pr_wire_sources)):
+            if j not in used_pr_indices:
+                pr2 = pr_wire_sources[j]
+                if _title_similarity(pr1.title, pr2.title) >= 0.5:
+                    cluster.append(pr2)
+                    used_pr_indices.add(j)
+
+        # Also check if any general news outlets republished this press release verbatim
+        for other in other_sources:
+            if other.source_id not in assigned_source_ids:
+                sim = _title_similarity(pr1.title, other.title)
+                # If high title similarity to PR wire, mark as syndicated copy
+                if sim >= 0.75:
+                    cluster.append(other)
+                    syndicated_ids.add(other.source_id)
+                    assigned_source_ids.add(other.source_id)
+
+        cluster_sids = [s.source_id for s in cluster]
+        for sid in cluster_sids[1:]:
+            syndicated_ids.add(sid)
+        assigned_source_ids.update(cluster_sids)
+
+        origins.append(
+            SourceOriginRecord(
+                origin_id=_origin_id(f"PR Wire: {pr1.title[:50]}"),
+                label=f"Corporate Press Release / PR Wire ({cluster[0].publisher})",
+                source_ids=cluster_sids,
+                is_independent=False,
+                independence_confidence=0.90,
+            )
         )
-        user = (
-            f"Articles:\n{json.dumps(items, indent=2)}\n\n"
-            'Return JSON: {"syndication_groups": [["source_id", "source_id"], ...]}\n'
-            "Each inner list is a group of source_ids that are the same story. "
-            "Singletons are not needed. Return empty list if nothing is clearly syndicated."
+
+    # 2. Group remaining independent media by publisher and story similarity
+    remaining = [s for s in sources if s.source_id not in assigned_source_ids]
+    publisher_map: dict[str, List[SourceRecord]] = {}
+
+    for s in remaining:
+        pub = s.publisher.strip() or _get_domain(s.url) or "Independent Source"
+        publisher_map.setdefault(pub, []).append(s)
+
+    for pub, pub_sources in publisher_map.items():
+        origins.append(
+            SourceOriginRecord(
+                origin_id=_origin_id(pub),
+                label=f"{pub} (Independent reporting)",
+                source_ids=[s.source_id for s in pub_sources],
+                is_independent=True,
+                independence_confidence=0.85,
+            )
         )
-        try:
-            raw = llm.complete(system, user)
-            data = json.loads(raw)
-            for group in data.get("syndication_groups", []):
-                if len(group) > 1:
-                    for sid in group[1:]:
-                        syndicated_ids[sid] = 0.9
-        except (LLMParseError, Exception) as exc:
-            logger.warning(f"Syndication detection chunk (offset={offset}) failed: {exc}")
 
-        if offset + _SYNDICATION_CHUNK < len(sources):
-            time.sleep(_INTER_CALL_SLEEP)
-
-    updated: list[SourceRecord] = []
+    # Update SourceRecord models with syndication flags
+    updated_sources: List[SourceRecord] = []
     for s in sources:
         if s.source_id in syndicated_ids:
-            updated.append(s.model_copy(update={
-                "is_syndicated": True,
-                "syndication_confidence": syndicated_ids[s.source_id],
-            }))
+            updated_sources.append(
+                s.model_copy(
+                    update={
+                        "is_syndicated": True,
+                        "syndication_confidence": 0.90,
+                    }
+                )
+            )
         else:
-            updated.append(s)
-    return updated
+            updated_sources.append(s)
 
-
-def _group_origins(sources: list[SourceRecord], llm: LLMProvider) -> list[SourceOriginRecord]:
-    if not sources:
-        return []
-
-    all_source_ids = {s.source_id for s in sources}
-    assigned: set[str] = set()
-    origins: list[SourceOriginRecord] = []
-
-    time.sleep(_INTER_CALL_SLEEP)  # avoid 429 after syndication calls
-
-    for offset in range(0, len(sources), _ORIGIN_CHUNK):
-        chunk = sources[offset: offset + _ORIGIN_CHUNK]
-        items = [{"source_id": s.source_id, "publisher": s.publisher, "title": s.title} for s in chunk]
-        system = (
-            "You are a source analyst. Group news sources by their likely original information origin. "
-            "For example, multiple outlets republishing one press release = one origin. "
-            "An independent investigative report = its own origin. Be conservative. "
-            "Return only valid JSON."
-        )
-        user = (
-            f"Sources:\n{json.dumps(items, indent=2)}\n\n"
-            'Return JSON: {"origin_groups": [{"label": "...", "source_ids": [...], '
-            '"is_independent": true, "confidence": 0.0}]}\n'
-            "Every source_id must appear in exactly one group."
-        )
-        try:
-            raw = llm.complete(system, user)
-            data = json.loads(raw)
-            for g in data.get("origin_groups", []):
-                label = g.get("label", "Unknown Origin")
-                source_ids = [sid for sid in g.get("source_ids", []) if sid in all_source_ids]
-                if not source_ids:
-                    continue
-                assigned.update(source_ids)
-                origins.append(SourceOriginRecord(
-                    origin_id=_origin_id(label),
-                    label=label,
-                    source_ids=source_ids,
-                    is_independent=bool(g.get("is_independent", True)),
-                    independence_confidence=float(g.get("confidence", 0.5)),
-                ))
-        except (LLMParseError, Exception) as exc:
-            logger.warning(f"Origin grouping chunk (offset={offset}) failed: {exc}")
-
-        if offset + _ORIGIN_CHUNK < len(sources):
-            time.sleep(_INTER_CALL_SLEEP)
-
-    # Any source not assigned by LLM gets its own fallback origin
-    for s in sources:
-        if s.source_id not in assigned:
-            origins.append(SourceOriginRecord(
-                origin_id=_origin_id(s.publisher),
-                label=s.publisher,
-                source_ids=[s.source_id],
-                is_independent=True,
-                independence_confidence=0.5,
-            ))
-
-    return origins
-
+    return updated_sources, origins
 
 
 def normalize(
-    sources: list[SourceRecord],
+    sources: List[SourceRecord],
     llm: LLMProvider,
-) -> tuple[list[SourceRecord], list[SourceOriginRecord]]:
-    """Deduplicate, detect syndication, and group sources into origins."""
-    sources = _deduplicate(sources)
-    sources = _detect_syndication(sources, llm)
-    origins = _group_origins(sources, llm)
-    return sources, origins
+) -> Tuple[List[SourceRecord], List[SourceOriginRecord]]:
+    """Deduplicate, detect syndication, and group sources into origin clusters.
+
+    Operates deterministically without wasting LLM quota.
+    """
+    unique_sources = _deduplicate(sources)
+    return _detect_syndication_and_origins(unique_sources)

@@ -41,7 +41,7 @@ def plan(context: ResearchContext, llm: LLMProvider) -> ResearchPlan:
     )
 
     try:
-        raw = llm.complete(SYSTEM_PROMPT, user_prompt)
+        raw = llm.complete(SYSTEM_PROMPT, user_prompt, stage="planning")
         data = json.loads(raw)
         return ResearchPlan.model_validate(data)
     except (LLMParseError, Exception) as exc:

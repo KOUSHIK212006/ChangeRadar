@@ -4,25 +4,55 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class IntelligenceSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
 
-    TAVILY_API_KEY: str = ""
+    # API Keys
+    GEMINI_API_KEY: str = ""
     GROQ_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+    TAVILY_API_KEY: str = ""
 
-    LLM_PROVIDER: str = "groq"
-    INTELLIGENCE_LLM_MODEL: str = "openai/gpt-oss-120b"
+    # Provider & Model Selection
+    LLM_PROVIDER: str = "gemini"  # "gemini" | "groq" | "openai"
+    GEMINI_MODEL: str = "gemini-1.5-flash"
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    OPENAI_MODEL: str = "gpt-4o-mini"
+    INTELLIGENCE_LLM_MODEL: str = ""
     INTELLIGENCE_LLM_TEMPERATURE: float = 0.1
-    LLM_TIMEOUT_SECONDS: int = 30
 
+    # Network & Retry Policies
+    LLM_TIMEOUT_SECONDS: int = 30
+    MAX_RETRIES: int = 3
+    RETRY_BACKOFF_BASE: float = 1.5
+    RETRY_BACKOFF_MAX: float = 10.0
+
+    # Search Configuration
     SEARCH_TIMEOUT_SECONDS: int = 15
     SEARCH_MAX_RESULTS: int = 10
-    MAX_RETRIES: int = 2
 
-    INTELLIGENCE_FIXTURE_MODE: bool = True  # True until real API keys are configured
+    # Batching Budgets
+    MAX_ARTICLES_PER_BATCH: int = 15
+    MAX_CLAIMS_PER_BATCH: int = 20
+    MAX_CHARS_PER_BATCH: int = 24000
+
+    # Caching Layer
+    ENABLE_LLM_CACHE: bool = True
+    CACHE_TTL_SECONDS: int = 86400  # 24 hours
+
+    # Mode: Set False for live AI research, True for fast offline testing
+    INTELLIGENCE_FIXTURE_MODE: bool = True
 
     @property
     def LLM_MODEL(self) -> str:
-        return self.INTELLIGENCE_LLM_MODEL
+        if self.INTELLIGENCE_LLM_MODEL:
+            return self.INTELLIGENCE_LLM_MODEL
+        if self.LLM_PROVIDER == "gemini":
+            return self.GEMINI_MODEL
+        elif self.LLM_PROVIDER == "groq":
+            return self.GROQ_MODEL
+        elif self.LLM_PROVIDER == "openai":
+            return self.OPENAI_MODEL
+        return self.GEMINI_MODEL
 
     @property
     def LLM_TEMPERATURE(self) -> float:

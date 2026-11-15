@@ -1,14 +1,15 @@
-"""Talking-point stress tester — batched.
+"""Talking-point stress tester — unified single-call assessment.
 
-1 LLM call to split ALL talking points into atomic claims.
-1 LLM call to match ALL atomic claims against existing evidence.
-1 LLM call to rewrite ALL matched talking points.
-Total: 3 calls (was up to 3N+2 calls for N talking points).
+Rules (Stage H):
+- Conditional: Only executed when user provides talking points.
+- 1 single batched LLM call for all talking points.
+- Reuses existing claims and evidence ledger rather than initiating duplicate research.
+- Identifies contradictions, flags unsupported statements, and proposes grounded rewrites.
 """
 
 import json
 import logging
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from intelligence.contracts import (
     ExtractedClaim,
@@ -20,181 +21,111 @@ from intelligence.providers.base import LLMParseError, LLMProvider
 
 logger = logging.getLogger("changeradar.intelligence.pipeline.stress_test")
 
-SPLIT_SYSTEM = (
-    "You are a fact extractor. Split each talking point into atomic factual claims. "
-    "Each claim must be a single, specific, verifiable statement. "
-    "Return only valid JSON."
+STRESS_TEST_UNIFIED_SYSTEM = (
+    "You are an executive meeting communications and evidence advisor.\n"
+    "Your objective is to stress-test planned talking points against the verified evidence ledger.\n"
+    "For each talking point:\n"
+    "1. Identify the atomic factual assertions.\n"
+    "2. Find matching claims from the provided evidence ledger.\n"
+    "3. Check for direct contradictions (e.g., claiming 20% growth when evidence reports 14%, or permanent hire when search is ongoing).\n"
+    "4. Provide a grounded suggested rewrite strictly anchored in the evidence, or null if evidence is insufficient.\n"
+    "5. Indicate whether more research is needed.\n"
+    "Return only valid JSON strictly matching the requested format."
 )
-
-MATCH_SYSTEM = (
-    "You are a fact matcher. For each atomic claim, find the best matching claim from "
-    "the existing evidence ledger. Return only valid JSON."
-)
-
-REWRITE_SYSTEM = (
-    "You are a communications advisor. For each talking point, rewrite it to be more "
-    "accurate based on the matched evidence. Only rewrite if every fact is grounded in "
-    "the evidence. Return only valid JSON."
-)
-
-
-def _batch_split(points: list[str], llm: LLMProvider) -> list[list[str]]:
-    """Split all talking points into atomic claims in one call."""
-    items = [{"point_index": i, "text": p} for i, p in enumerate(points)]
-    user_prompt = (
-        f"Talking points:\n{json.dumps(items, indent=2)}\n\n"
-        'Return JSON: {"splits": [{"point_index": 0, "claims": ["...", "..."]}]}\n'
-        "Each claim must be a single verifiable fact."
-    )
-    try:
-        raw = llm.complete(SPLIT_SYSTEM, user_prompt)
-        data = json.loads(raw)
-        result = [""] * len(points)
-        splits_map: dict[int, list[str]] = {}
-        for s in data.get("splits", []):
-            idx = s.get("point_index", 0)
-            splits_map[idx] = [c for c in s.get("claims", []) if c.strip()]
-        return [splits_map.get(i, [points[i]]) for i in range(len(points))]
-    except (LLMParseError, Exception) as exc:
-        logger.warning(f"Batched split failed: {exc}")
-        return [[p] for p in points]
-
-
-def _batch_match(
-    atomic_claims_per_point: list[list[str]],
-    existing_claims: list[ExtractedClaim],
-    llm: LLMProvider,
-) -> list[list[Optional[ExtractedClaim]]]:
-    """Match all atomic claims against the evidence ledger in one call."""
-    if not existing_claims:
-        return [[None] * len(ac) for ac in atomic_claims_per_point]
-
-    ledger = [{"claim_index": i, "text": c.text} for i, c in enumerate(existing_claims)]
-
-    items = []
-    for pi, atomic_claims in enumerate(atomic_claims_per_point):
-        for ai, ac in enumerate(atomic_claims):
-            items.append({"point_index": pi, "atomic_index": ai, "text": ac})
-
-    user_prompt = (
-        f"Evidence ledger:\n{json.dumps(ledger, indent=2)}\n\n"
-        f"Atomic claims to match:\n{json.dumps(items, indent=2)}\n\n"
-        'Return JSON: {"matches": [{"point_index": 0, "atomic_index": 0, '
-        '"matched_claim_index": 2}]}\n'
-        "Only include a match when the atomic claim and ledger claim assert the same specific fact. "
-        "Omit entries where no match exists."
-    )
-
-    match_map: dict[tuple[int, int], int] = {}
-    try:
-        raw = llm.complete(MATCH_SYSTEM, user_prompt)
-        data = json.loads(raw)
-        for m in data.get("matches", []):
-            pi = m.get("point_index")
-            ai = m.get("atomic_index")
-            ci = m.get("matched_claim_index")
-            if pi is not None and ai is not None and ci is not None:
-                if 0 <= ci < len(existing_claims):
-                    match_map[(pi, ai)] = ci
-    except (LLMParseError, Exception) as exc:
-        logger.warning(f"Batched match failed: {exc}")
-
-    result: list[list[Optional[ExtractedClaim]]] = []
-    for pi, atomic_claims in enumerate(atomic_claims_per_point):
-        row: list[Optional[ExtractedClaim]] = []
-        for ai in range(len(atomic_claims)):
-            ci = match_map.get((pi, ai))
-            row.append(existing_claims[ci] if ci is not None else None)
-        result.append(row)
-    return result
-
-
-def _batch_rewrite(
-    points: list[str],
-    matched_claims: list[Optional[ExtractedClaim]],
-    sources: list[SourceRecord],
-    llm: LLMProvider,
-) -> list[Optional[str]]:
-    """Generate grounded rewrites for all talking points in one call."""
-    source_map = {s.source_id: s for s in sources}
-
-    rewrite_eligible = []
-    for i, (point, claim) in enumerate(zip(points, matched_claims)):
-        if claim and claim.assessment in {"SUPPORTED", "PARTIALLY_SUPPORTED", "CONTRADICTED"}:
-            evidence_items = [
-                {
-                    "excerpt": ev.excerpt,
-                    "source": source_map[ev.source_id].publisher if ev.source_id in source_map else "unknown",
-                    "relevance": ev.relevance,
-                }
-                for ev in claim.evidence[:3]
-            ]
-            rewrite_eligible.append({
-                "point_index": i,
-                "original": point,
-                "assessment": claim.assessment,
-                "evidence": evidence_items,
-            })
-
-    if not rewrite_eligible:
-        return [None] * len(points)
-
-    user_prompt = (
-        f"Talking points to rewrite:\n{json.dumps(rewrite_eligible, indent=2)}\n\n"
-        'Return JSON: {"rewrites": [{"point_index": 0, "suggested_wording": "..." or null}]}\n'
-        "Only rewrite if every fact is grounded in the evidence. Return null otherwise."
-    )
-
-    rewrite_map: dict[int, Optional[str]] = {}
-    try:
-        raw = llm.complete(REWRITE_SYSTEM, user_prompt)
-        data = json.loads(raw)
-        for r in data.get("rewrites", []):
-            pi = r.get("point_index")
-            if pi is not None:
-                rewrite_map[pi] = r.get("suggested_wording")
-    except (LLMParseError, Exception) as exc:
-        logger.warning(f"Batched rewrite failed: {exc}")
-
-    return [rewrite_map.get(i) for i in range(len(points))]
 
 
 def run(
-    talking_points: list[str],
-    existing_claims: list[ExtractedClaim],
-    sources: list[SourceRecord],
+    talking_points: List[str],
+    existing_claims: List[ExtractedClaim],
+    sources: List[SourceRecord],
     llm: LLMProvider,
 ) -> StressTestResult:
-    """Assess all talking points in 3 batched LLM calls."""
+    """Evaluate all talking points against existing evidence in a single batched LLM call."""
     if not talking_points:
         return StressTestResult(points=[])
 
-    # 1. Split all points into atomic claims — 1 call
-    atomic_claims_per_point = _batch_split(talking_points, llm)
-
-    # 2. Match all atomic claims against ledger — 1 call
-    matches_per_point = _batch_match(atomic_claims_per_point, existing_claims, llm)
-
-    # Best matched claim per point (first match found)
-    best_match_per_point: list[Optional[ExtractedClaim]] = [
-        next((m for m in matches if m is not None), None)
-        for matches in matches_per_point
+    # Build evidence ledger representation
+    source_map = {s.source_id: s for s in sources}
+    ledger = [
+        {
+            "claim_id": c.claim_id,
+            "text": c.text,
+            "assessment": c.assessment,
+            "rationale": c.assessment_rationale,
+            "evidence_excerpts": [
+                {
+                    "publisher": source_map[e.source_id].publisher if e.source_id in source_map else "Source",
+                    "excerpt": e.excerpt[:250],
+                    "relevance": e.relevance,
+                }
+                for e in c.evidence[:2]
+            ],
+        }
+        for c in existing_claims
     ]
 
-    # 3. Rewrite all eligible points — 1 call
-    rewrites = _batch_rewrite(talking_points, best_match_per_point, sources, llm)
+    points_payload = [{"point_index": i, "text": p} for i, p in enumerate(talking_points)]
 
-    results: list[StressTestPointResult] = []
+    user_prompt = (
+        f"Verified Evidence Ledger ({len(ledger)} claims):\n{json.dumps(ledger, indent=2)}\n\n"
+        f"Planned Talking Points to Stress-Test:\n{json.dumps(points_payload, indent=2)}\n\n"
+        "Return JSON in this structure:\n"
+        "{\n"
+        '  "evaluations": [\n'
+        '    {\n'
+        '      "point_index": 0,\n'
+        '      "extracted_claims": ["Atomic factual statement"],\n'
+        '      "matched_claim_ids": ["clm-..."],\n'
+        '      "suggested_wording": "Grounded rewrite or null",\n'
+        '      "needs_more_research": false\n'
+        "    }\n"
+        "  ]\n"
+        "}\n"
+    )
+
+    claims_by_id = {c.claim_id: c for c in existing_claims}
+    eval_map: Dict[int, Dict[str, Any]] = {}
+
+    try:
+        raw = llm.complete(STRESS_TEST_UNIFIED_SYSTEM, user_prompt, stage="stress_test")
+        data = json.loads(raw)
+        for ev in data.get("evaluations", []):
+            idx = ev.get("point_index")
+            if idx is not None:
+                eval_map[idx] = ev
+    except (LLMParseError, Exception) as exc:
+        logger.warning(f"Unified stress test LLM call failed: {exc}")
+
+    results: List[StressTestPointResult] = []
+
     for i, point in enumerate(talking_points):
-        matched = [m for m in matches_per_point[i] if m is not None]
-        needs_more_research = any(m is None for m in matches_per_point[i])
+        ev = eval_map.get(i)
+        if not ev:
+            # Fallback when LLM fails or omitted
+            results.append(
+                StressTestPointResult(
+                    original_point=point,
+                    extracted_claims=[point],
+                    assessments=[],
+                    suggested_wording=None,
+                    needs_more_research=True,
+                )
+            )
+            continue
 
-        results.append(StressTestPointResult(
-            original_point=point,
-            extracted_claims=atomic_claims_per_point[i],
-            assessments=matched,
-            suggested_wording=rewrites[i],
-            needs_more_research=needs_more_research,
-        ))
+        matched_claims = [
+            claims_by_id[cid] for cid in ev.get("matched_claim_ids", []) if cid in claims_by_id
+        ]
+        extracted_facts = [f for f in ev.get("extracted_claims", []) if f.strip()] or [point]
+
+        results.append(
+            StressTestPointResult(
+                original_point=point,
+                extracted_claims=extracted_facts,
+                assessments=matched_claims,
+                suggested_wording=ev.get("suggested_wording"),
+                needs_more_research=bool(ev.get("needs_more_research", not matched_claims)),
+            )
+        )
 
     return StressTestResult(points=results)
