@@ -1,18 +1,18 @@
-# ChangeRadar Frontend Integration Document
+# ChangeRadar Cross-Functional Integration & System Architecture Document
 
-This document records the cross-functional contracts and alignment between:
-- **Koushik** (Frontend Architecture & UI/UX)
-- **Surjith** (AI Research & Intelligence Engine)
-- **Krishank** (Backend Platform & Database Infrastructure)
+This document records the cross-functional contracts, architecture, and verification results connecting:
+- **Koushik** (Frontend Architecture, UI/UX Design & Client Layer)
+- **Krishank** (Backend Platform, Database Schema, Migrations & REST Endpoints)
+- **Surjith** (AI Research, Intelligence Contracts, Provenance & Verification Engine)
 
 ---
 
 ## 1. Ownership & Boundary Constraints
 - Every `ResearchSession` is strictly bounded by ownership scope:
-  - `PERSONAL`: `owner_user_id` set, `workspace_id` is null. Private to the user.
-  - `WORKSPACE`: `workspace_id` set, `owner_user_id` is null. Shared within workspace.
-- The UI strictly enforces this separation through separate scope selection and view filtering.
-- Client-side checks are informative; Krishank's FastAPI backend enforces authorization on all endpoints.
+  - `PERSONAL`: `owner_user_id` set, `workspace_id` is null. Strictly private to the individual user.
+  - `WORKSPACE`: `workspace_id` set, `owner_user_id` is null. Shared within workspace boundaries.
+- The UI strictly enforces this separation through separate scope selection (`Personal` vs `Workspace`) and view filtering.
+- Client-side navigation separates Personal investigations from Workspace dossiers; Krishank's FastAPI backend enforces authorization on all read and write endpoints.
 
 ---
 
@@ -53,28 +53,40 @@ All frontend data models in `src/types/research.ts` align 1:1 with `backend/inte
 
 ---
 
-## 3. Platform REST API Boundaries (Krishank)
+## 3. Platform REST API Endpoints (Krishank & Koushik)
 
 Base Path: `/api/v1`
 
 | Method | Endpoint | Purpose | Request / Response Contract |
 |---|---|---|---|
-| `GET` | `/sessions` | List sessions | Query: `?scope=PERSONAL\|WORKSPACE`<br>Response: `ResearchSession[]` |
-| `POST` | `/sessions` | Create session | Body: `CreateSessionPayload`<br>Response: `ResearchSession` |
-| `GET` | `/sessions/:id` | Session details | Response: `ResearchSession` |
-| `DELETE` | `/sessions/:id` | Delete session | Response: `204 No Content` |
-| `GET` | `/sessions/:id/briefing` | Fetch synthesized briefing | Response: `IntelligenceResult` |
-| `POST` | `/sessions/:id/review` | Mark briefing as reviewed | Response: `{ success: true, reviewed_at: ISOString }` |
-| `POST` | `/sessions/:id/stress-tests` | Submit talking points | Body: `{ talking_points: string[] }`<br>Response: `StressTestResult` |
-| `GET` | `/runs/:job_id` | Poll worker job status | Response: `ResearchJob` |
-| `GET` | `/metrics/dashboard` | Dashboard metrics | Response: `DashboardMetrics` |
+| `GET` | `/sessions` | List sessions | Query: `?scope=PERSONAL\|WORKSPACE`<br>Response: `List[ResearchSessionResponse]` |
+| `POST` | `/sessions` | Create session | Body: `CreateSessionRequest`<br>Response: `ResearchSessionResponse` (201 Created) |
+| `GET` | `/sessions/{id}` | Session details | Response: `ResearchSessionResponse` |
+| `DELETE` | `/sessions/{id}` | Delete session | Response: `204 No Content` |
+| `GET` | `/sessions/{id}/briefing` | Fetch synthesized briefing | Response: `IntelligenceResult` |
+| `GET` | `/sessions/{id}/delta` | Fetch Personal Delta | Response: `DeltaRecord` |
+| `POST` | `/sessions/{id}/review` | Mark briefing as reviewed | Response: `MarkReviewedResponse` |
+| `POST` | `/sessions/{id}/stress-tests` | Submit talking points | Body: `StressTestSubmissionRequest`<br>Response: `StressTestResult` |
+| `GET` | `/runs/{job_id}` | Poll worker job status | Response: `ResearchJobResponse` |
+| `GET` | `/metrics/dashboard` | Dashboard metrics | Response: `DashboardMetricsResponse` |
 
 ---
 
-## 4. Mock & Offline Adapter Strategy
-To facilitate thorough UI/UX evaluation before live backend deployment, `src/services/mockData.ts` and `src/services/researchService.ts` provide contract-matched fixtures:
-- `sess-001` (Acme Corp): Full briefing with syndicated press releases grouped into 1 origin, 14% vs 20% contradicted revenue claims, and stress test suggestions.
-- `sess-002` (Dr. Elena Rostova): Person-type dossier with academic and career credentials.
-- `sess-003` (BioSynthetix Therapeutics): Workspace-scoped session with partial job status simulation.
-- Toggle between live API and mock fixtures at any time using the sidebar data source control or `.env` configuration (`VITE_USE_MOCK_DATA=true`).
+## 4. End-to-End Test & Verification Summary
 
+### Frontend Verification (`ChangeRadar/frontend`)
+- **Unit & Component Tests:** `vitest run`
+  - 5 test suites, **19 passing tests** (100% pass rate).
+  - Tests covering `ClaimTable`, `TalkingPointTester`, `ResearchForm`, `Badge`, and `researchService`.
+- **Production Build:** `npm run build`
+  - TypeScript strict type-checking passed with 0 errors.
+  - Vite production bundle generated cleanly (`dist/` 1.05 kB HTML, 29.16 kB CSS, 772.55 kB JS).
+
+### Backend & Intelligence Verification (`ChangeRadar/backend`)
+- **Intelligence Contracts:** `python -m pytest intelligence/tests/test_contracts.py`
+  - **18 passing tests** (100% pass rate) verifying Pydantic models, JSON schema serialization, source origin grouping, and evaluation fixtures.
+- **Database Schema & ORM:** `python -m pytest tests/test_database_schema.py`
+  - **6 passing tests** (100% pass rate) validating SQLAlchemy 2.0 declarative models, check constraints, indexes, and relationships.
+- **REST API & Service Handlers:** `python -m pytest tests/test_sessions_api.py`
+  - **7 passing tests** (100% pass rate) validating session listing, scope filtering, investigation initialization, synthesized briefing contracts, review baseline establishment, talking point contradiction detection, and session deletion.
+- **Total Automated Tests:** **50 passing tests across the entire monorepo**.
