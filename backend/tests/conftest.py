@@ -20,6 +20,8 @@ os.environ["ENVIRONMENT"] = "testing"
 os.environ["DEBUG"] = "true"
 os.environ["LOG_LEVEL"] = "WARNING"
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ["JWT_SECRET_KEY"] = "test-only-jwt-secret-key-at-least-32-chars"
+os.environ["INTELLIGENCE_FIXTURE_MODE"] = "true"
 
 from app.api.deps import get_db
 from app.config import Settings, get_settings
@@ -44,6 +46,7 @@ def get_test_settings() -> Settings:
         DEBUG=True,
         LOG_LEVEL="WARNING",
         DATABASE_URL="sqlite:///:memory:",
+        JWT_SECRET_KEY="test-only-jwt-secret-key-at-least-32-chars",
         CORS_ORIGINS=["http://localhost:5173", "http://testserver"],
     )
 
@@ -87,4 +90,3 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
         yield test_client
 
     app.dependency_overrides.clear()
-
