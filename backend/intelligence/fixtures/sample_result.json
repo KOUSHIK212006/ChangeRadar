@@ -1,0 +1,341 @@
+{
+  "session_id": "sess-001",
+  "job_id": "job-001",
+  "status": "COMPLETED",
+
+  "sources": [
+    {
+      "source_id": "src-a1b2c3d4",
+      "url": "https://www.reuters.com/business/acme-corp-apac-expansion-2024-10-01/?utm_source=google",
+      "canonical_url": "https://www.reuters.com/business/acme-corp-apac-expansion-2024-10-01",
+      "title": "Acme Corp announces APAC expansion with Singapore hub",
+      "publisher": "Reuters",
+      "snippet": "Acme Corp announced plans to establish a regional headquarters in Singapore as part of a broader push into Asia-Pacific markets, targeting a 2025 launch.",
+      "published_at": "2024-10-01T09:00:00Z",
+      "discovered_at": "2024-10-15T14:22:00Z",
+      "is_syndicated": false,
+      "syndication_confidence": 0.0
+    },
+    {
+      "source_id": "src-e5f6g7h8",
+      "url": "https://www.businesswire.com/news/acme-corp-apac-press-release-2024-10-01",
+      "canonical_url": "https://www.businesswire.com/news/acme-corp-apac-press-release-2024-10-01",
+      "title": "Acme Corp to Open Singapore Regional HQ — Official Press Release",
+      "publisher": "BusinessWire",
+      "snippet": "Acme Corp (NASDAQ: ACME) today announced the establishment of its Asia-Pacific regional headquarters in Singapore, effective Q1 2025.",
+      "published_at": "2024-10-01T07:00:00Z",
+      "discovered_at": "2024-10-15T14:22:05Z",
+      "is_syndicated": true,
+      "syndication_confidence": 0.91
+    },
+    {
+      "source_id": "src-i9j0k1l2",
+      "url": "https://www.ft.com/content/acme-corp-q3-results-2024",
+      "canonical_url": "https://www.ft.com/content/acme-corp-q3-results-2024",
+      "title": "Acme Corp Q3 results: revenue up 14% as margins compress",
+      "publisher": "Financial Times",
+      "snippet": "Acme Corp reported Q3 revenue growth of 14% year-over-year, falling short of analyst expectations of 18%, while operating margins declined from 22% to 19%.",
+      "published_at": "2024-10-10T16:30:00Z",
+      "discovered_at": "2024-10-15T14:22:10Z",
+      "is_syndicated": false,
+      "syndication_confidence": 0.0
+    },
+    {
+      "source_id": "src-m3n4o5p6",
+      "url": "https://www.bloomberg.com/news/acme-corp-cfo-departure-2024-09-28",
+      "canonical_url": "https://www.bloomberg.com/news/acme-corp-cfo-departure-2024-09-28",
+      "title": "Acme Corp CFO departs amid strategic review",
+      "publisher": "Bloomberg",
+      "snippet": "Acme Corp's Chief Financial Officer resigned last week, the company confirmed, citing personal reasons. An interim CFO has been appointed while a search is underway.",
+      "published_at": "2024-09-28T11:00:00Z",
+      "discovered_at": "2024-10-15T14:22:15Z",
+      "is_syndicated": false,
+      "syndication_confidence": 0.0
+    }
+  ],
+
+  "origins": [
+    {
+      "origin_id": "org-press001",
+      "label": "Acme Corp Official Press Release (APAC Announcement)",
+      "source_ids": ["src-a1b2c3d4", "src-e5f6g7h8"],
+      "is_independent": false,
+      "independence_confidence": 0.88
+    },
+    {
+      "origin_id": "org-ft001",
+      "label": "Financial Times (independent reporting)",
+      "source_ids": ["src-i9j0k1l2"],
+      "is_independent": true,
+      "independence_confidence": 0.95
+    },
+    {
+      "origin_id": "org-bbg001",
+      "label": "Bloomberg (independent reporting)",
+      "source_ids": ["src-m3n4o5p6"],
+      "is_independent": true,
+      "independence_confidence": 0.95
+    }
+  ],
+
+  "events": [
+    {
+      "event_id": "evt-apac01",
+      "title": "Acme Corp announces APAC regional headquarters in Singapore",
+      "description": "Acme Corp announced plans to establish a regional headquarters in Singapore targeting a Q1 2025 launch, as part of a broader Asia-Pacific expansion strategy.",
+      "lifecycle_status": "NEW",
+      "is_disputed": false,
+      "is_uncertain": false,
+      "event_at": "2024-10-01T07:00:00Z",
+      "published_at": "2024-10-01T07:00:00Z",
+      "discovered_at": "2024-10-15T14:22:05Z",
+      "source_ids": ["src-a1b2c3d4", "src-e5f6g7h8"],
+      "origin_ids": ["org-press001"],
+      "claim_ids": ["clm-001", "clm-002"]
+    },
+    {
+      "event_id": "evt-q3rev01",
+      "title": "Acme Corp Q3 revenue grows 14%, below analyst expectations",
+      "description": "Acme Corp reported Q3 revenue growth of 14% year-over-year, missing analyst consensus of 18%. Operating margins declined from 22% to 19%.",
+      "lifecycle_status": "NEW",
+      "is_disputed": false,
+      "is_uncertain": false,
+      "event_at": "2024-10-10T00:00:00Z",
+      "published_at": "2024-10-10T16:30:00Z",
+      "discovered_at": "2024-10-15T14:22:10Z",
+      "source_ids": ["src-i9j0k1l2"],
+      "origin_ids": ["org-ft001"],
+      "claim_ids": ["clm-003", "clm-004"]
+    },
+    {
+      "event_id": "evt-cfo01",
+      "title": "Acme Corp CFO resigns, interim appointment made",
+      "description": "Acme Corp's CFO resigned citing personal reasons. An interim CFO has been appointed while a permanent search is underway.",
+      "lifecycle_status": "DEVELOPING",
+      "is_disputed": false,
+      "is_uncertain": true,
+      "event_at": "2024-09-27T00:00:00Z",
+      "published_at": "2024-09-28T11:00:00Z",
+      "discovered_at": "2024-10-15T14:22:15Z",
+      "source_ids": ["src-m3n4o5p6"],
+      "origin_ids": ["org-bbg001"],
+      "claim_ids": ["clm-005", "clm-006"]
+    }
+  ],
+
+  "event_versions": [],
+
+  "claims": [
+    {
+      "claim_id": "clm-001",
+      "text": "Acme Corp is establishing a regional headquarters in Singapore.",
+      "assessment": "SUPPORTED",
+      "assessment_rationale": "Confirmed by official press release and independently reported by Reuters.",
+      "evidence": [
+        {
+          "evidence_id": "ev-001a",
+          "excerpt": "Acme Corp (NASDAQ: ACME) today announced the establishment of its Asia-Pacific regional headquarters in Singapore, effective Q1 2025.",
+          "source_id": "src-e5f6g7h8",
+          "relevance": "SUPPORTING"
+        },
+        {
+          "evidence_id": "ev-001b",
+          "excerpt": "Acme Corp announced plans to establish a regional headquarters in Singapore as part of a broader push into Asia-Pacific markets.",
+          "source_id": "src-a1b2c3d4",
+          "relevance": "SUPPORTING"
+        }
+      ],
+      "source_doc_count": 2,
+      "independent_origin_count": 1,
+      "volatility": "LOW",
+      "is_stale": false,
+      "llm_confidence": 0.97
+    },
+    {
+      "claim_id": "clm-002",
+      "text": "Acme Corp's Singapore headquarters is targeting a Q1 2025 launch.",
+      "assessment": "SUPPORTED",
+      "assessment_rationale": "Stated in the official press release; no contradicting evidence found.",
+      "evidence": [
+        {
+          "evidence_id": "ev-002a",
+          "excerpt": "Acme Corp (NASDAQ: ACME) today announced the establishment of its Asia-Pacific regional headquarters in Singapore, effective Q1 2025.",
+          "source_id": "src-e5f6g7h8",
+          "relevance": "SUPPORTING"
+        }
+      ],
+      "source_doc_count": 2,
+      "independent_origin_count": 1,
+      "volatility": "MEDIUM",
+      "is_stale": false,
+      "llm_confidence": 0.91
+    },
+    {
+      "claim_id": "clm-003",
+      "text": "Acme Corp Q3 revenue grew 14% year-over-year.",
+      "assessment": "SUPPORTED",
+      "assessment_rationale": "Reported by Financial Times based on Acme Corp's official Q3 results.",
+      "evidence": [
+        {
+          "evidence_id": "ev-003a",
+          "excerpt": "Acme Corp reported Q3 revenue growth of 14% year-over-year, falling short of analyst expectations of 18%.",
+          "source_id": "src-i9j0k1l2",
+          "relevance": "SUPPORTING"
+        }
+      ],
+      "source_doc_count": 1,
+      "independent_origin_count": 1,
+      "volatility": "LOW",
+      "is_stale": false,
+      "llm_confidence": 0.95
+    },
+    {
+      "claim_id": "clm-004",
+      "text": "Acme Corp Q3 revenue growth of 20% year-over-year.",
+      "assessment": "CONTRADICTED",
+      "assessment_rationale": "Financial Times reports 14% growth, directly contradicting the 20% figure in the talking point.",
+      "evidence": [
+        {
+          "evidence_id": "ev-004a",
+          "excerpt": "Acme Corp reported Q3 revenue growth of 14% year-over-year, falling short of analyst expectations of 18%.",
+          "source_id": "src-i9j0k1l2",
+          "relevance": "CONTRADICTING"
+        }
+      ],
+      "source_doc_count": 1,
+      "independent_origin_count": 1,
+      "volatility": "LOW",
+      "is_stale": false,
+      "llm_confidence": 0.93
+    },
+    {
+      "claim_id": "clm-005",
+      "text": "Acme Corp's CFO has resigned.",
+      "assessment": "SUPPORTED",
+      "assessment_rationale": "Confirmed by Bloomberg; company acknowledged the departure.",
+      "evidence": [
+        {
+          "evidence_id": "ev-005a",
+          "excerpt": "Acme Corp's Chief Financial Officer resigned last week, the company confirmed, citing personal reasons.",
+          "source_id": "src-m3n4o5p6",
+          "relevance": "SUPPORTING"
+        }
+      ],
+      "source_doc_count": 1,
+      "independent_origin_count": 1,
+      "volatility": "LOW",
+      "is_stale": false,
+      "llm_confidence": 0.98
+    },
+    {
+      "claim_id": "clm-006",
+      "text": "A permanent CFO replacement has been named at Acme Corp.",
+      "assessment": "INSUFFICIENT",
+      "assessment_rationale": "Only an interim appointment is confirmed; no permanent successor has been announced in available sources.",
+      "evidence": [
+        {
+          "evidence_id": "ev-006a",
+          "excerpt": "An interim CFO has been appointed while a search is underway.",
+          "source_id": "src-m3n4o5p6",
+          "relevance": "CONTRADICTING"
+        }
+      ],
+      "source_doc_count": 1,
+      "independent_origin_count": 1,
+      "volatility": "HIGH",
+      "is_stale": false,
+      "llm_confidence": 0.82
+    }
+  ],
+
+  "coverage": {
+    "planned_searches": 5,
+    "executed_searches": 5,
+    "failed_searches": 0,
+    "time_window_days": 30,
+    "source_types_found": ["news", "press_release"],
+    "origin_diversity_score": 0.67,
+    "gaps": [
+      "No regulatory or legal filings found for the time window",
+      "Product launch details not covered beyond the APAC announcement"
+    ],
+    "warnings": [
+      "APAC expansion sources originate from a single press release origin — treat as 1 independent confirmation"
+    ]
+  },
+
+  "delta": null,
+
+  "stress_test": {
+    "points": [
+      {
+        "original_point": "Acme Corp is aggressively expanding into the APAC market",
+        "extracted_claims": [
+          "Acme Corp is expanding into the APAC market"
+        ],
+        "assessments": [
+          {
+            "claim_id": "clm-001",
+            "text": "Acme Corp is establishing a regional headquarters in Singapore.",
+            "assessment": "SUPPORTED",
+            "assessment_rationale": "Confirmed by official press release and independently reported by Reuters.",
+            "evidence": [
+              {
+                "evidence_id": "ev-001a",
+                "excerpt": "Acme Corp (NASDAQ: ACME) today announced the establishment of its Asia-Pacific regional headquarters in Singapore, effective Q1 2025.",
+                "source_id": "src-e5f6g7h8",
+                "relevance": "SUPPORTING"
+              }
+            ],
+            "source_doc_count": 2,
+            "independent_origin_count": 1,
+            "volatility": "LOW",
+            "is_stale": false,
+            "llm_confidence": 0.97
+          }
+        ],
+        "suggested_wording": "Acme Corp has announced plans to establish a regional headquarters in Singapore, targeting a Q1 2025 launch, as part of its Asia-Pacific expansion.",
+        "needs_more_research": false
+      },
+      {
+        "original_point": "Their Q3 revenue grew 20% year-over-year",
+        "extracted_claims": [
+          "Acme Corp Q3 revenue grew 20% year-over-year"
+        ],
+        "assessments": [
+          {
+            "claim_id": "clm-004",
+            "text": "Acme Corp Q3 revenue growth of 20% year-over-year.",
+            "assessment": "CONTRADICTED",
+            "assessment_rationale": "Financial Times reports 14% growth, directly contradicting the 20% figure in the talking point.",
+            "evidence": [
+              {
+                "evidence_id": "ev-004a",
+                "excerpt": "Acme Corp reported Q3 revenue growth of 14% year-over-year, falling short of analyst expectations of 18%.",
+                "source_id": "src-i9j0k1l2",
+                "relevance": "CONTRADICTING"
+              }
+            ],
+            "source_doc_count": 1,
+            "independent_origin_count": 1,
+            "volatility": "LOW",
+            "is_stale": false,
+            "llm_confidence": 0.93
+          }
+        ],
+        "suggested_wording": "Acme Corp reported Q3 revenue growth of 14% year-over-year, though this fell short of analyst expectations of 18%.",
+        "needs_more_research": false
+      }
+    ]
+  },
+
+  "warnings": [],
+
+  "provider_metadata": {
+    "search_provider": "fixture",
+    "llm_provider": "fixture",
+    "llm_model": "fixture",
+    "run_at": "2024-10-15T14:22:00Z",
+    "fixture_mode": true
+  }
+}

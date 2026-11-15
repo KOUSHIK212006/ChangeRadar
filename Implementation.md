@@ -513,7 +513,8 @@ POST   /workspaces/{workspace_id}/research
 POST   /workspaces/{workspace_id}/tasks
 GET    /workspaces/{workspace_id}/tasks
 POST   /workspaces/{workspace_id}/comments
-GET    /workspaces/{workspace_id}/comments
+GET    /workspaces/{workspace_id}/commentsFsurjith
+
 ```
 
 ### API behavior requirements
