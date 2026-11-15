@@ -1,0 +1,21 @@
+{
+  "session_id": "sess-001",
+  "job_id": "job-001",
+  "context": {
+    "target_name": "Acme Corp",
+    "target_type": "company",
+    "meeting_objective": "Evaluate Acme Corp as a potential distribution partner for APAC expansion",
+    "time_window_days": 30,
+    "research_questions": [
+      "Any recent leadership or executive changes?",
+      "New product launches or strategic pivots?",
+      "Any financial performance updates or funding news?",
+      "Ongoing legal, regulatory, or reputational issues?"
+    ],
+    "talking_points": [
+      "Acme Corp is aggressively expanding into the APAC market",
+      "Their Q3 revenue grew 20% year-over-year"
+    ]
+  },
+  "baseline": null
+}
