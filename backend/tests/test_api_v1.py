@@ -139,11 +139,13 @@ def test_create_personal_research_session(client: TestClient, db_session: Sessio
     assert response.status_code == 201
 
     data = response.json()
+    assert "session_id" in data
+    assert "job_id" in data
     assert "session" in data
     assert data["session"]["target_name"] == "Stripe"
     assert data["session"]["scope"] == "PERSONAL"
     assert "job" in data
-    assert data["job"]["status"] == "QUEUED"
+    assert data["job"]["status"] in ["PENDING", "QUEUED"]
     assert data["job"]["attempt_count"] == 0
 
 

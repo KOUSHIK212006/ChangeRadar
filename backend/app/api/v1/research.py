@@ -99,11 +99,11 @@ def create_research_session(
     db.add(session)
     db.flush()
 
-    # 2. Create Initial Queued Worker Job
+    # 2. Create Initial Pending Worker Job
     job = ResearchJob(
         session_id=session.id,
-        status=ResearchJobStatus.QUEUED,
-        stage="queued",
+        status=ResearchJobStatus.PENDING,
+        stage="pending",
         progress_percent=0,
         attempt_count=0,
         max_attempts=3,
@@ -125,6 +125,8 @@ def create_research_session(
     session_response.active_job = ResearchJobResponse.model_validate(job)
 
     return ResearchSessionCreateResponse(
+        session_id=session.id,
+        job_id=job.id,
         session=session_response,
         job=ResearchJobResponse.model_validate(job),
     )
