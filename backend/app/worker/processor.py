@@ -139,6 +139,9 @@ class IntelligenceEngineProcessor:
 
 def _build_summary(result: Any) -> str:
     """Build a human-readable summary from the intelligence result."""
+    if getattr(result, "briefing_summary", None):
+        return result.briefing_summary
+
     event_count = len(result.events)
     claim_count = len(result.claims)
     source_count = len(result.sources)

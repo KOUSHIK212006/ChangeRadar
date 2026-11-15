@@ -28,7 +28,15 @@ class ResearchWorker:
         base_retry_delay_seconds: int = 5,
     ):
         self.worker_id = worker_id or f"worker-{os.getpid()}-{uuid.uuid4().hex[:6]}"
-        self.processor = processor or MockResearchProcessor()
+        if processor:
+            self.processor = processor
+        else:
+            from intelligence.config import intelligence_settings
+            if intelligence_settings.USE_FIXTURE_MODE:
+                self.processor = MockResearchProcessor()
+            else:
+                from app.worker.processor import IntelligenceEngineProcessor
+                self.processor = IntelligenceEngineProcessor()
         self.session_factory = session_factory
         self.poll_interval = poll_interval
         self.base_retry_delay_seconds = base_retry_delay_seconds
@@ -99,3 +107,11 @@ class ResearchWorker:
     def stop(self) -> None:
         """Signal the worker loop to cleanly exit."""
         self._is_running = False
+
+
+if __name__ == "__main__":
+    from app.logging_config import setup_logging
+    setup_logging()
+    logger.info("Initializing ChangeRadar standalone research worker daemon...")
+    worker = ResearchWorker()
+    worker.run_loop()

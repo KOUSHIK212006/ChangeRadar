@@ -71,7 +71,7 @@ def _build_batch_prompt(
             "title": s.title,
             "publisher": s.publisher,
             "published_at": s.published_at.isoformat() if s.published_at else "unknown",
-            "content": s.snippet,
+            "content": s.snippet[:2500] if len(s.snippet) > 2500 else s.snippet,
         }
         for s in chunk
     ]

@@ -21,10 +21,19 @@ def create_db_engine(database_url: str):
     is_sqlite = database_url.startswith("sqlite")
 
     if is_sqlite:
+        connect_args = {"check_same_thread": False}
+        if ":memory:" in database_url:
+            from sqlalchemy.pool import StaticPool
+            return create_engine(
+                database_url,
+                echo=settings.DATABASE_ECHO,
+                connect_args=connect_args,
+                poolclass=StaticPool,
+            )
         return create_engine(
             database_url,
             echo=settings.DATABASE_ECHO,
-            connect_args={"check_same_thread": False},
+            connect_args=connect_args,
         )
     else:
         return create_engine(

@@ -27,12 +27,16 @@ from app.api.deps import get_db
 from app.config import Settings, get_settings
 from app.core.database import Base
 import app.core.database as db_module
+import app.models  # Ensure all SQLAlchemy models are registered
 from app.main import app
 
-# Test SQLite in-memory engine
+from sqlalchemy.pool import StaticPool
+
+# Test SQLite in-memory engine with StaticPool so all threads share memory safely
 test_engine = create_engine(
     "sqlite:///:memory:",
     connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 db_module.engine = test_engine
@@ -51,9 +55,9 @@ def get_test_settings() -> Settings:
     )
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(autouse=True)
 def setup_test_db():
-    """Create all test database tables once per test session."""
+    """Create fresh database tables for each test and clean up afterwards."""
     Base.metadata.create_all(bind=test_engine)
     yield
     Base.metadata.drop_all(bind=test_engine)
@@ -61,17 +65,12 @@ def setup_test_db():
 
 @pytest.fixture
 def db_session() -> Generator[Session, None, None]:
-    """Provide a transactional database session for a test."""
-    connection = test_engine.connect()
-    transaction = connection.begin()
-    session = TestingSessionLocal(bind=connection)
-
-    yield session
-
-    session.close()
-    if transaction.is_active:
-        transaction.rollback()
-    connection.close()
+    """Provide a clean database session for a test."""
+    session = TestingSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 @pytest.fixture
@@ -83,7 +82,9 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
         finally:
             pass
 
+    from app.core.database import get_db as core_get_db
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[core_get_db] = override_get_db
     app.dependency_overrides[get_settings] = get_test_settings
 
     with TestClient(app, base_url="http://testserver") as test_client:

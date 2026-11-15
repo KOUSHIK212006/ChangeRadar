@@ -68,19 +68,49 @@ def _run_live_pipeline(request: ResearchRequest) -> IntelligenceResult:
     # 1. Stage A: Plan (1 LLM call)
     research_plan = plan(request.context, llm_provider)
 
-    # 2. Stage B: Search (Tavily search API)
+    # 2. Stage B: Search (Tavily search API - parallelized with bounded concurrency)
     all_raw_sources = []
     executed = 0
     failed = 0
-    for query in research_plan.queries:
-        try:
-            results = search_provider.search(query, request.context)
-            all_raw_sources.extend(results)
-            executed += 1
-        except SearchProviderError as exc:
-            failed += 1
-            warnings.append(f"Search failed for query '{query}': {exc}")
-            logger.warning(f"Search failed for '{query}': {exc}")
+
+    # Deduplicate queries while preserving order
+    unique_queries: list[str] = []
+    seen_queries: set[str] = set()
+    for q in research_plan.queries:
+        q_clean = q.strip()
+        if q_clean and q_clean.lower() not in seen_queries:
+            seen_queries.add(q_clean.lower())
+            unique_queries.append(q_clean)
+
+    query_results: dict[str, list] = {}
+
+    def _exec_search(q: str):
+        return q, search_provider.search(q, request.context)
+
+    if unique_queries:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        max_workers = min(4, max(1, len(unique_queries)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_query = {executor.submit(_exec_search, q): q for q in unique_queries}
+            for future in as_completed(future_to_query):
+                q = future_to_query[future]
+                try:
+                    _, results = future.result()
+                    query_results[q] = results
+                    executed += 1
+                except SearchProviderError as exc:
+                    failed += 1
+                    warnings.append(f"Search failed for query '{q}': {exc}")
+                    logger.warning(f"Search failed for '{q}': {exc}")
+                except Exception as exc:
+                    failed += 1
+                    warnings.append(f"Unexpected search error for '{q}': {exc}")
+                    logger.warning(f"Unexpected search error for '{q}': {exc}")
+
+        # Assemble in predictable deterministic query order
+        for q in unique_queries:
+            if q in query_results:
+                all_raw_sources.extend(query_results[q])
 
     if not all_raw_sources:
         warnings.append("No sources retrieved — search queries returned empty results.")
