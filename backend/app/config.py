@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     DB_MAX_OVERFLOW: int = 10
     DB_POOL_TIMEOUT: int = 30
 
+    # JWT Authentication
+    JWT_SECRET_KEY: str = Field(
+        default="changeradar-dev-insecure-secret-key-change-in-production-12345678",
+        description="Secret key for JWT token generation and verification",
+    )
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
+
 
 @lru_cache()
 def get_settings() -> Settings:
@@ -64,4 +72,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-

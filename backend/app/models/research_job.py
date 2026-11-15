@@ -43,14 +43,14 @@ class ResearchJob(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     status: Mapped[ResearchJobStatus] = mapped_column(
         SQLEnum(ResearchJobStatus, native_enum=False, length=50),
-        default=ResearchJobStatus.QUEUED,
+        default=ResearchJobStatus.PENDING,
         index=True,
         nullable=False,
     )
 
     stage: Mapped[Optional[str]] = mapped_column(
         String(100),
-        default="queued",
+        default="pending",
         nullable=True,
     )
     progress_percent: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -85,4 +85,3 @@ class ResearchJob(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<ResearchJob id={self.id} session={self.session_id} status={self.status} attempts={self.attempt_count}>"
-

@@ -70,6 +70,14 @@ Access the interactive API documentation:
 - ReDoc: [http://localhost:8000/redoc](http://localhost:8000/redoc)
 - Health Check: [http://localhost:8000/health](http://localhost:8000/health)
 
+### 4. Run the Background Research Worker
+
+The worker daemon runs in a separate process independent from FastAPI:
+
+```bash
+python -m app.worker.runner
+```
+
 ---
 
 ## Running Tests

@@ -68,6 +68,19 @@ class ResearchContext(BaseModel):
     talking_points: list[str] = Field(default_factory=list, description="Talking points to stress-test")
 
 
+class BaselineEventSnapshot(BaseModel):
+    """Snapshot of a single event at review time — used for material change detection."""
+    event_id: str
+    description: str
+    lifecycle_status: str
+
+
+class BaselineClaimSnapshot(BaseModel):
+    """Snapshot of a single claim's assessment at review time — used for changed-assessment detection."""
+    claim_id: str
+    assessment: str
+
+
 class ResearchBaseline(BaseModel):
     """Snapshot of the user's last reviewed state — used for delta computation."""
 
@@ -75,6 +88,8 @@ class ResearchBaseline(BaseModel):
     reviewed_at: datetime = Field(..., description="UTC timestamp when the user marked it reviewed")
     known_event_ids: list[str] = Field(default_factory=list, description="Event IDs present at review time")
     known_claim_ids: list[str] = Field(default_factory=list, description="Claim IDs present at review time")
+    event_snapshots: list[BaselineEventSnapshot] = Field(default_factory=list, description="Event descriptions at review time — enables LLM material change detection")
+    claim_snapshots: list[BaselineClaimSnapshot] = Field(default_factory=list, description="Claim assessments at review time — enables changed-assessment detection")
 
 
 class ResearchRequest(BaseModel):
