@@ -36,14 +36,26 @@ def create_db_engine(database_url: str):
             connect_args=connect_args,
         )
     else:
-        return create_engine(
-            database_url,
-            echo=settings.DATABASE_ECHO,
-            pool_pre_ping=True,
-            pool_size=settings.DB_POOL_SIZE,
-            max_overflow=settings.DB_MAX_OVERFLOW,
-            pool_timeout=settings.DB_POOL_TIMEOUT,
-        )
+        try:
+            return create_engine(
+                database_url,
+                echo=settings.DATABASE_ECHO,
+                pool_pre_ping=True,
+                pool_size=settings.DB_POOL_SIZE,
+                max_overflow=settings.DB_MAX_OVERFLOW,
+                pool_timeout=settings.DB_POOL_TIMEOUT,
+            )
+        except (ModuleNotFoundError, ImportError) as exc:
+            logger.warning(
+                "Database driver for '%s' not available (%s). Falling back to local SQLite database 'changeradar.db'.",
+                database_url,
+                exc,
+            )
+            return create_engine(
+                "sqlite:///./changeradar.db",
+                echo=settings.DATABASE_ECHO,
+                connect_args={"check_same_thread": False},
+            )
 
 
 # Global database engine and session factory

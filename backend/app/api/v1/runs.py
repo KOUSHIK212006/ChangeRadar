@@ -1,11 +1,13 @@
 """Research job execution and progress monitoring endpoints."""
 
 import uuid
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db
+from app.api.deps import get_current_user_optional, get_db, verify_session_access
 from app.models.research_job import ResearchJob
+from app.models.user import User
 from app.schemas.research import ResearchJobResponse
 
 router = APIRouter(tags=["Research Runs & Jobs"])
@@ -19,6 +21,7 @@ router = APIRouter(tags=["Research Runs & Jobs"])
 )
 def get_run_status(
     job_id: str,
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> ResearchJobResponse:
     """Return current stage and progress percentage of the research job."""
@@ -42,6 +45,10 @@ def get_run_status(
             created_at=None,  # type: ignore
             updated_at=None,  # type: ignore
         )
+
+    # Enforce authorization via the job's research session
+    if job.session:
+        verify_session_access(job.session, current_user, db)
 
     return ResearchJobResponse(
         id=str(job.id),

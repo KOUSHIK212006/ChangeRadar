@@ -12,10 +12,12 @@ import uuid
 
 from sqlalchemy.orm import Session
 
+from app.api.deps import DEMO_USER_ID, DEMO_WORKSPACE_ID
 from app.models.enums import OwnershipScope, ResearchJobStatus, ResearchResultStatus, SessionStatus
 from app.models.research_job import ResearchJob
 from app.models.research_result import ResearchResult
 from app.models.research_session import ResearchSession
+from app.models.user import User
 from app.schemas.research import (
     CreateSessionRequest,
     DashboardMetricsResponse,
@@ -79,7 +81,7 @@ def seed_initial_sessions_if_empty(db: Session) -> None:
             "A permanent CFO has been hired to steady operations",
         ],
         scope=OwnershipScope.PERSONAL,
-        owner_user_id=uuid.uuid4(),  # demo user
+        owner_user_id=DEMO_USER_ID,
         workspace_id=None,
         status=SessionStatus.ACTIVE,
         created_at=now,
@@ -121,7 +123,6 @@ def seed_initial_sessions_if_empty(db: Session) -> None:
     # Seed 2: Palantir Technologies (Workspace)
     s2_id = uuid.uuid4()
     j2_id = uuid.uuid4()
-    ws_id = uuid.uuid4()
     s2 = ResearchSession(
         id=s2_id,
         title="Palantir Technologies — Strategic Briefing",
@@ -133,7 +134,7 @@ def seed_initial_sessions_if_empty(db: Session) -> None:
         talking_points=["AIP customer count doubled in the recent period"],
         scope=OwnershipScope.WORKSPACE,
         owner_user_id=None,
-        workspace_id=ws_id,
+        workspace_id=DEMO_WORKSPACE_ID,
         status=SessionStatus.ACTIVE,
         created_at=now,
         updated_at=now,
@@ -155,12 +156,42 @@ def seed_initial_sessions_if_empty(db: Session) -> None:
     db.commit()
 
 
-def get_sessions_list(db: Session, scope: Optional[OwnershipScope] = None) -> List[ResearchSessionResponse]:
+def get_sessions_list(
+    db: Session,
+    scope: Optional[OwnershipScope] = None,
+    user: Optional[User] = None,
+) -> List[ResearchSessionResponse]:
     """Retrieve all sessions with latest job and result attached."""
     seed_initial_sessions_if_empty(db)
     query = db.query(ResearchSession)
     if scope:
         query = query.filter(ResearchSession.scope == scope)
+
+    from sqlalchemy import or_
+
+    if user:
+        from app.models.workspace import WorkspaceMembership
+
+        user_workspace_ids = [
+            m.workspace_id
+            for m in db.query(WorkspaceMembership.workspace_id)
+            .filter(WorkspaceMembership.user_id == user.id)
+            .all()
+        ]
+        access_condition = or_(
+            ResearchSession.owner_user_id == user.id,
+            ResearchSession.owner_user_id == DEMO_USER_ID,
+            ResearchSession.workspace_id == DEMO_WORKSPACE_ID,
+            ResearchSession.workspace_id.in_(user_workspace_ids) if user_workspace_ids else False,
+        )
+        query = query.filter(access_condition)
+    else:
+        query = query.filter(
+            or_(
+                ResearchSession.owner_user_id == DEMO_USER_ID,
+                ResearchSession.workspace_id == DEMO_WORKSPACE_ID,
+            )
+        )
 
     sessions = query.order_by(ResearchSession.created_at.desc()).all()
     results = []
@@ -232,7 +263,9 @@ def get_sessions_list(db: Session, scope: Optional[OwnershipScope] = None) -> Li
     return results
 
 
-def get_session_by_id(db: Session, session_id: str) -> Optional[ResearchSessionResponse]:
+def get_session_by_id(
+    db: Session, session_id: str, user: Optional[User] = None
+) -> Optional[ResearchSessionResponse]:
     """Retrieve single session by ID."""
     try:
         sid = uuid.UUID(session_id)
@@ -241,6 +274,12 @@ def get_session_by_id(db: Session, session_id: str) -> Optional[ResearchSessionR
         return None
 
     if not s:
+        return None
+
+    from app.api.deps import verify_session_access
+    try:
+        verify_session_access(s, user, db)
+    except Exception:
         return None
 
     latest_job = (
@@ -307,17 +346,46 @@ def get_session_by_id(db: Session, session_id: str) -> Optional[ResearchSessionR
     )
 
 
-def create_session_and_job(db: Session, payload: CreateSessionRequest) -> ResearchSessionResponse:
+def create_session_and_job(
+    db: Session, payload: CreateSessionRequest, user: Optional[User] = None
+) -> ResearchSessionResponse:
     """Create a new research session, spawn initial research job, and persist synthesized result."""
     now = datetime.now(timezone.utc)
     s_id = uuid.uuid4()
     j_id = uuid.uuid4()
     r_id = uuid.uuid4()
 
-    owner_id = uuid.uuid4() if payload.scope == OwnershipScope.PERSONAL else None
+    if user and payload.scope == OwnershipScope.PERSONAL:
+        owner_id = user.id
+    else:
+        owner_id = DEMO_USER_ID if payload.scope == OwnershipScope.PERSONAL else None
+
     ws_id = uuid.UUID(payload.workspace_id) if (payload.workspace_id and payload.scope == OwnershipScope.WORKSPACE) else None
     if payload.scope == OwnershipScope.WORKSPACE and not ws_id:
-        ws_id = uuid.uuid4()
+        ws_id = DEMO_WORKSPACE_ID
+
+    if payload.scope == OwnershipScope.WORKSPACE and ws_id and ws_id != DEMO_WORKSPACE_ID:
+        if not user:
+            from app.core.exceptions import ForbiddenException
+            raise ForbiddenException(
+                message="You do not have access to the specified workspace.",
+                code="WORKSPACE_ACCESS_DENIED",
+            )
+        from app.models.workspace import WorkspaceMembership
+        from app.core.exceptions import ForbiddenException
+        membership = (
+            db.query(WorkspaceMembership)
+            .filter(
+                WorkspaceMembership.workspace_id == ws_id,
+                WorkspaceMembership.user_id == user.id,
+            )
+            .first()
+        )
+        if not membership:
+            raise ForbiddenException(
+                message="You do not have access to the specified workspace.",
+                code="WORKSPACE_ACCESS_DENIED",
+            )
 
     session = ResearchSession(
         id=s_id,
@@ -373,15 +441,20 @@ def create_session_and_job(db: Session, payload: CreateSessionRequest) -> Resear
     db.add(result)
     db.commit()
 
-    return get_session_by_id(db, str(s_id))  # type: ignore
+    return get_session_by_id(db, str(s_id), user=user)  # type: ignore
 
 
-def delete_session_by_id(db: Session, session_id: str) -> bool:
+def delete_session_by_id(db: Session, session_id: str, user: Optional[User] = None) -> bool:
     """Delete session and cascade relationships."""
     try:
         sid = uuid.UUID(session_id)
         session = db.query(ResearchSession).filter(ResearchSession.id == sid).first()
         if not session:
+            return False
+        from app.api.deps import verify_session_access
+        try:
+            verify_session_access(session, user, db)
+        except Exception:
             return False
         db.delete(session)
         db.commit()
@@ -390,10 +463,19 @@ def delete_session_by_id(db: Session, session_id: str) -> bool:
         return False
 
 
-def get_session_briefing(db: Session, session_id: str) -> Optional[IntelligenceResult]:
+def get_session_briefing(db: Session, session_id: str, user: Optional[User] = None) -> Optional[IntelligenceResult]:
     """Retrieve synthesized intelligence result for session."""
     try:
         sid = uuid.UUID(session_id)
+        session = db.query(ResearchSession).filter(ResearchSession.id == sid).first()
+        if not session:
+            return None
+        from app.api.deps import verify_session_access
+        try:
+            verify_session_access(session, user, db)
+        except Exception:
+            return None
+
         result = (
             db.query(ResearchResult)
             .filter(ResearchResult.session_id == sid)
@@ -404,20 +486,22 @@ def get_session_briefing(db: Session, session_id: str) -> Optional[IntelligenceR
             return IntelligenceResult.model_validate(result.raw_intelligence)
 
         # Fallback to loading fixture adapted to this session
-        session = db.query(ResearchSession).filter(ResearchSession.id == sid).first()
-        if session:
-            return load_fixture_intelligence(str(sid), str(uuid.uuid4()), session.target_name)
-        return None
+        return load_fixture_intelligence(str(sid), str(uuid.uuid4()), session.target_name)
     except ValueError:
         return None
 
 
-def mark_session_reviewed(db: Session, session_id: str) -> Optional[MarkReviewedResponse]:
+def mark_session_reviewed(db: Session, session_id: str, user: Optional[User] = None) -> Optional[MarkReviewedResponse]:
     """Update session review baseline and mark latest result as reviewed."""
     try:
         sid = uuid.UUID(session_id)
         session = db.query(ResearchSession).filter(ResearchSession.id == sid).first()
         if not session:
+            return None
+        from app.api.deps import verify_session_access
+        try:
+            verify_session_access(session, user, db)
+        except Exception:
             return None
 
         now = datetime.now(timezone.utc)
@@ -460,10 +544,16 @@ def mark_session_reviewed(db: Session, session_id: str) -> Optional[MarkReviewed
 
 
 def execute_stress_test(
-    db: Session, session_id: str, request: StressTestSubmissionRequest
+    db: Session,
+    session_id: str,
+    request: StressTestSubmissionRequest,
+    user: Optional[User] = None,
 ) -> StressTestResult:
     """Stress-test submitted talking points against evidence for this session."""
-    briefing = get_session_briefing(db, session_id)
+    briefing = get_session_briefing(db, session_id, user=user)
+    if not briefing:
+        from app.core.exceptions import NotFoundException
+        raise NotFoundException(message=f"Research session '{session_id}' not found.", code="SESSION_NOT_FOUND")
     points_result: List[StressTestPointResult] = []
 
     for point in request.talking_points:

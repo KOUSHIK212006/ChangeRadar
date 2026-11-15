@@ -7,7 +7,7 @@ name = "changeradar-backend"
 version = "0.1.0"
 description = "ChangeRadar Backend & Platform - AI-powered pre-meeting research intelligence"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 authors = [
     { name = "ChangeRadar Team" }
 ]

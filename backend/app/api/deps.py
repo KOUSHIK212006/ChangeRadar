@@ -62,34 +62,66 @@ def get_current_user(
     return user
 
 
-def verify_session_access(session: ResearchSession, user: User, db: Session) -> None:
+def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """Validate JWT bearer token if provided; return None if unauthenticated."""
+    if not credentials or not credentials.credentials:
+        return None
+    try:
+        payload = decode_access_token(credentials.credentials)
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            return None
+        user_uuid = uuid.UUID(user_id_str)
+        user = db.query(User).filter(User.id == user_uuid).first()
+        if user and user.is_active:
+            return user
+        return None
+    except Exception:
+        return None
+
+
+DEMO_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+DEMO_WORKSPACE_ID = uuid.UUID("00000000-0000-0000-0000-000000000002")
+
+
+def verify_session_access(session: ResearchSession, user: Optional[User], db: Session) -> None:
     """Verify that user is authorized to view or mutate the given research session."""
     if session.scope == OwnershipScope.PERSONAL:
-        if session.owner_user_id != user.id:
-            raise NotFoundException(
-                message="Research session not found.",
-                code="SESSION_NOT_FOUND",
-            )
+        if session.owner_user_id is not None and session.owner_user_id != DEMO_USER_ID:
+            if not user or session.owner_user_id != user.id:
+                raise NotFoundException(
+                    message="Research session not found.",
+                    code="SESSION_NOT_FOUND",
+                )
     elif session.scope == OwnershipScope.WORKSPACE:
-        # Check that user is an active member of this workspace
-        membership = (
-            db.query(WorkspaceMembership)
-            .filter(
-                WorkspaceMembership.workspace_id == session.workspace_id,
-                WorkspaceMembership.user_id == user.id,
+        if session.workspace_id is not None and session.workspace_id != DEMO_WORKSPACE_ID:
+            if not user:
+                raise NotFoundException(
+                    message="Research session not found.",
+                    code="SESSION_NOT_FOUND",
+                )
+            membership = (
+                db.query(WorkspaceMembership)
+                .filter(
+                    WorkspaceMembership.workspace_id == session.workspace_id,
+                    WorkspaceMembership.user_id == user.id,
+                )
+                .first()
             )
-            .first()
-        )
-        if not membership:
-            raise NotFoundException(
-                message="Research session not found.",
-                code="SESSION_NOT_FOUND",
-            )
+            if not membership:
+                raise NotFoundException(
+                    message="Research session not found.",
+                    code="SESSION_NOT_FOUND",
+                )
 
 
 __all__ = [
     "get_db",
     "get_current_user",
+    "get_current_user_optional",
     "verify_session_access",
     "Session",
     "User",
