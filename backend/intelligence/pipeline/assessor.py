@@ -8,6 +8,7 @@ Rules (Stage E):
 """
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 from typing import Any, Dict, List, Set
@@ -42,6 +43,8 @@ ASSESS_SYSTEM = (
     "- INSUFFICIENT: Provided excerpts do not contain enough facts to substantiate the claim.\n"
     "- OUTDATED: Stated fact was previously true but subsequent events or reporting supersede it.\n"
     "- UNVERIFIABLE: Beyond public disclosure or unverified speculation.\n"
+    "- A newer publication date does NOT automatically invalidate an older fact. Only mark OUTDATED if newer reporting establishes that the underlying real-world fact has changed or ended.\n"
+    "- Do NOT treat syndicated copies or duplicate wire republications as independent confirmations.\n"
     "Return only valid JSON strictly matching the requested format."
 )
 
@@ -60,13 +63,13 @@ def _find_relevant_sources(claim: ExtractedClaim, sources: List[SourceRecord]) -
 
 def _count_independent_origins(source_ids: List[str], origins: List[SourceOriginRecord]) -> int:
     """Count unique independent origins that contain any of the given source_ids."""
-    if not source_ids:
+    if not source_ids or not origins:
         return 0
     sid_set = set(source_ids)
     matched_origins = {
         o.origin_id for o in origins if o.is_independent and any(sid in sid_set for sid in o.source_ids)
     }
-    return max(len(matched_origins), 1)
+    return len(matched_origins)
 
 
 def _is_stale(claim: ExtractedClaim, sources: List[SourceRecord]) -> bool:
@@ -198,7 +201,7 @@ def assess_claims(
 
             evidence_records.append(
                 EvidenceRecord(
-                    evidence_id=f"ev-{uuid.uuid4().hex[:8]}",
+                    evidence_id=f"ev-{hashlib.sha256(f'{s.source_id}:{c.claim_id}'.encode('utf-8')).hexdigest()[:12]}",
                     excerpt=s.snippet,
                     source_id=s.source_id,
                     relevance=relevance,
@@ -208,10 +211,19 @@ def assess_claims(
         active_sids = [e.source_id for e in evidence_records]
         origin_count = _count_independent_origins(active_sids, origins)
 
+        # Enforce Evidence Integrity: Non-independent wire copies alone cannot verify a claim
+        rationale_text = res.get("rationale", c.assessment_rationale)
+        if assessment_val == "SUPPORTED" and origin_count == 0:
+            assessment_val = "PARTIALLY_SUPPORTED"
+            rationale_text = (
+                "Claim relies exclusively on non-independent or syndicated wire copies; "
+                "cannot be marked fully verified without independent reporting."
+            )
+
         updated_claim = c.model_copy(
             update={
                 "assessment": assessment_val,
-                "assessment_rationale": res.get("rationale", c.assessment_rationale),
+                "assessment_rationale": rationale_text,
                 "evidence": evidence_records,
                 "source_doc_count": len(active_sids),
                 "independent_origin_count": origin_count,

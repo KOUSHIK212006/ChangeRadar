@@ -31,9 +31,17 @@ class LLMCache:
         self.misses = 0
 
     @staticmethod
-    def compute_key(model: str, system_prompt: str, user_prompt: str, version: str = PROMPT_VERSION) -> str:
-        """Generate deterministic SHA-256 cache key."""
-        payload = f"{model}:{version}:{system_prompt.strip()}:{user_prompt.strip()}"
+    def compute_key(
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        version: str = PROMPT_VERSION,
+        provider: str = "default",
+        temperature: float = 0.0,
+        json_mode: bool = True,
+    ) -> str:
+        """Generate deterministic SHA-256 cache key incorporating provider, model, version, settings, and prompts."""
+        payload = f"{provider}:{model}:{version}:{temperature}:{json_mode}:{system_prompt.strip()}:{user_prompt.strip()}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @staticmethod

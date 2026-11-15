@@ -26,7 +26,10 @@ class LLMParseError(LLMError):
 
 class QuotaExhaustedError(LLMError):
     """Raised when Gemini or LLM API quota (HTTP 429 / RESOURCE_EXHAUSTED) is exhausted."""
-    pass
+
+    def __init__(self, message: str, retry_after: Optional[float] = None):
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 class PermanentLLMError(LLMError):

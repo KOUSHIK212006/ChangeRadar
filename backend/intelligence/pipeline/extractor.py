@@ -41,6 +41,16 @@ def _event_id(title: str) -> str:
     return hashlib.sha256(title.lower().strip().encode("utf-8")).hexdigest()[:16]
 
 
+def _claim_id(text: str, source_id: str) -> str:
+    raw = f"{source_id}:{text.strip().lower()}"
+    return f"clm-{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:12]}"
+
+
+def _evidence_id(source_id: str, claim_id: str) -> str:
+    raw = f"{source_id}:{claim_id}"
+    return f"ev-{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:12]}"
+
+
 def _parse_dt(value: Optional[str]) -> Optional[datetime]:
     if not value or value.lower() in ("null", "none", "unknown"):
         return None
@@ -163,7 +173,8 @@ def _extract_batch(
         if not claim_sids and chunk:
             claim_sids = [chunk[0].source_id]
 
-        claim_id = f"clm-{uuid.uuid4().hex[:8]}"
+        primary_sid = claim_sids[0] if claim_sids else (chunk[0].source_id if chunk else "src")
+        claim_id = _claim_id(text, primary_sid)
 
         # Link claim to its corresponding event
         ev_title = c.get("event_title", "").strip().lower()
@@ -175,7 +186,7 @@ def _extract_batch(
 
         evidence_records = [
             EvidenceRecord(
-                evidence_id=f"ev-{uuid.uuid4().hex[:8]}",
+                evidence_id=_evidence_id(sid, claim_id),
                 excerpt=source_map[sid].snippet,
                 source_id=sid,
                 relevance="SUPPORTING",

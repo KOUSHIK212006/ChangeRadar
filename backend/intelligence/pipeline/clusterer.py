@@ -79,6 +79,17 @@ def cluster_events(
 
         for j in range(i + 1, len(events)):
             if j not in used_indices:
+                # Do not forcibly merge uncertain events with confirmed events
+                if events[i].is_uncertain != events[j].is_uncertain:
+                    continue
+                # If both are uncertain, require high similarity rather than loose merging
+                if events[i].is_uncertain and events[j].is_uncertain:
+                    title_sim = _similarity(events[i].title, events[j].title)
+                    if title_sim >= 0.85:
+                        cluster.append(events[j])
+                        used_indices.add(j)
+                    continue
+
                 title_sim = _similarity(events[i].title, events[j].title)
                 desc_sim = _similarity(events[i].description, events[j].description)
                 # If high title similarity or strong description overlap, cluster them

@@ -55,7 +55,14 @@ class BaseLLMProvider(LLMProvider):
 
     def complete(self, system_prompt: str, user_prompt: str, stage: str = "general") -> str:
         """Complete prompt with caching, backoff retries, and telemetry auditing."""
-        cache_key = self._cache.compute_key(self._model, system_prompt, user_prompt)
+        cache_key = self._cache.compute_key(
+            model=self._model,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            provider=self.provider_name,
+            temperature=self._temperature,
+            json_mode=True,
+        )
         cached_result = self._cache.get(cache_key)
 
         tracker = get_current_tracker()
@@ -157,10 +164,13 @@ class BaseLLMProvider(LLMProvider):
                     error_category="QuotaExhausted",
                 )
                 if attempt < self._max_retries:
-                    backoff = min(
-                        intelligence_settings.RETRY_BACKOFF_MAX,
-                        (intelligence_settings.RETRY_BACKOFF_BASE ** attempt) + random.uniform(0.1, 0.5),
-                    )
+                    if exc.retry_after is not None and exc.retry_after > 0:
+                        backoff = min(intelligence_settings.RETRY_BACKOFF_MAX, exc.retry_after)
+                    else:
+                        backoff = min(
+                            intelligence_settings.RETRY_BACKOFF_MAX,
+                            (intelligence_settings.RETRY_BACKOFF_BASE ** attempt) + random.uniform(0.1, 0.5),
+                        )
                     logger.warning(
                         f"Rate limit / 429 quota reached on {self.provider_name} (attempt {attempt + 1}). "
                         f"Retrying in {backoff:.2f}s..."
@@ -169,7 +179,8 @@ class BaseLLMProvider(LLMProvider):
                 else:
                     raise QuotaExhaustedError(
                         f"Gemini API quota exceeded (HTTP 429) after {self._max_retries + 1} attempts. "
-                        f"Please check quota limits or rate allowance."
+                        f"Please check quota limits or rate allowance.",
+                        retry_after=exc.retry_after,
                     ) from exc
 
             except (httpx.TimeoutException, httpx.HTTPStatusError, TransientLLMError, Exception) as exc:
@@ -241,7 +252,17 @@ class GeminiLLMProvider(BaseLLMProvider):
             status_code = response.status_code
 
             if status_code == 429:
-                raise QuotaExhaustedError(f"Gemini API returned 429 Quota Exhausted: {response.text}")
+                retry_after_hdr = response.headers.get("Retry-After")
+                retry_after_val: Optional[float] = None
+                if retry_after_hdr:
+                    try:
+                        retry_after_val = float(retry_after_hdr)
+                    except ValueError:
+                        pass
+                raise QuotaExhaustedError(
+                    f"Gemini API returned 429 Quota Exhausted: {response.text}",
+                    retry_after=retry_after_val,
+                )
             elif status_code in (401, 403):
                 raise PermanentLLMError(f"Gemini Authentication Failed ({status_code}): {response.text}")
             elif status_code == 400:
@@ -316,7 +337,17 @@ class GroqLLMProvider(BaseLLMProvider):
             status_code = response.status_code
 
             if status_code == 429:
-                raise QuotaExhaustedError(f"Groq 429 Rate Limit: {response.text}")
+                retry_after_hdr = response.headers.get("Retry-After")
+                retry_after_val: Optional[float] = None
+                if retry_after_hdr:
+                    try:
+                        retry_after_val = float(retry_after_hdr)
+                    except ValueError:
+                        pass
+                raise QuotaExhaustedError(
+                    f"Groq 429 Rate Limit: {response.text}",
+                    retry_after=retry_after_val,
+                )
             elif status_code in (401, 403):
                 raise PermanentLLMError(f"Groq Auth Error ({status_code}): {response.text}")
             elif status_code == 400:
@@ -359,5 +390,6 @@ def get_llm_provider(
     elif provider in ("groq", "openai"):
         return GroqLLMProvider(api_key=api_key, model=model)
     else:
-        # Default fallback to Gemini
-        return GeminiLLMProvider(api_key=api_key, model=model)
+        raise ValueError(
+            f"Unsupported LLM provider '{provider}'. Supported providers are: 'gemini', 'groq', 'openai'."
+        )
