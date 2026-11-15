@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import List, Union
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -56,6 +56,27 @@ class Settings(BaseSettings):
     DB_MAX_OVERFLOW: int = 10
     DB_POOL_TIMEOUT: int = 30
 
+    # JWT Authentication
+    JWT_SECRET_KEY: str = Field(
+        default="changeradar-dev-insecure-secret-key-change-in-production-12345678",
+        description="Secret key for JWT token generation and verification",
+    )
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
+
+    @model_validator(mode="after")
+    def validate_production_jwt_secret(self) -> "Settings":
+        if self.ENVIRONMENT.lower() in {"production", "prod"} and (
+            self.JWT_SECRET_KEY
+            == "changeradar-dev-insecure-secret-key-change-in-production-12345678"
+            or self.JWT_SECRET_KEY.lower().startswith("replace-with-")
+            or len(self.JWT_SECRET_KEY) < 32
+        ):
+            raise ValueError(
+                "JWT_SECRET_KEY must be configured with at least 32 characters in production."
+            )
+        return self
+
 
 @lru_cache()
 def get_settings() -> Settings:
@@ -64,4 +85,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-

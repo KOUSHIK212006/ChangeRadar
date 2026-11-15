@@ -1,0 +1,139 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #191918;
+  --bg-secondary: #242321;
+  --bg-elevated: #2B2926;
+  --accent: #E45B3F;
+  --accent-hover: #F06A4D;
+  --text-primary: #F1EDE5;
+  --text-secondary: #A6A096;
+  --text-muted: #77736B;
+  --border: #393632;
+  --success: #65B891;
+  --warning: #E5B45C;
+  --danger: #E45B3F;
+  --info: #83A9D1;
+}
+
+@layer base {
+  body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  /* Custom subtle scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #191918;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #393632;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #524E48;
+  }
+
+  /* Accessible focus indicators */
+  *:focus-visible {
+    outline: 2px solid #E45B3F;
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .radar-card {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    transition: border-color 200ms ease, box-shadow 200ms ease;
+  }
+
+  .radar-card-elevated {
+    background-color: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+
+  .radar-card:hover {
+    border-color: #524E48;
+  }
+
+  .radar-input {
+    background-color: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 8px;
+    padding: 0.625rem 0.875rem;
+    font-size: 0.875rem;
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+  }
+
+  .radar-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+
+  .radar-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .radar-button-primary {
+    background-color: var(--accent);
+    color: #FFFFFF;
+    font-weight: 500;
+    padding: 0.625rem 1.125rem;
+    border-radius: 8px;
+    transition: background-color 150ms ease, transform 100ms ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  .radar-button-primary:hover:not(:disabled) {
+    background-color: var(--accent-hover);
+  }
+
+  .radar-button-primary:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  .radar-button-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .radar-button-secondary {
+    background-color: var(--bg-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    font-weight: 500;
+    padding: 0.625rem 1.125rem;
+    border-radius: 8px;
+    transition: background-color 150ms ease, border-color 150ms ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  .radar-button-secondary:hover:not(:disabled) {
+    background-color: #34322E;
+    border-color: #524E48;
+  }
+
+  .radar-button-secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+

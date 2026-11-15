@@ -85,4 +85,3 @@ class ResearchJob(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<ResearchJob id={self.id} session={self.session_id} status={self.status} attempts={self.attempt_count}>"
-
