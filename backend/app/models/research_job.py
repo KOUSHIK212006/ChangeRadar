@@ -43,7 +43,7 @@ class ResearchJob(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     status: Mapped[ResearchJobStatus] = mapped_column(
         SQLEnum(ResearchJobStatus, native_enum=False, length=50),
-        default=ResearchJobStatus.QUEUED,
+        default=ResearchJobStatus.PENDING,
         index=True,
         nullable=False,
     )

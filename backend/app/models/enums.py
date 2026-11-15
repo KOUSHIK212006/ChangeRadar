@@ -17,6 +17,7 @@ class SessionStatus(str, enum.Enum):
 
 class ResearchJobStatus(str, enum.Enum):
     """Execution status of a research worker job."""
+    PENDING = "PENDING"
     QUEUED = "QUEUED"
     RUNNING = "RUNNING"
     RETRY_WAIT = "RETRY_WAIT"
