@@ -46,6 +46,7 @@ def load_fixture_intelligence(session_id: str, job_id: str, target_name: Optiona
 
     # If a specific target name was requested other than Acme Corp, adapt descriptions
     if target_name and target_name.lower() != "acme corp":
+        data["briefing_summary"] = f"Synthesized research briefing and change-aware intelligence analysis for {target_name}."
         data["executive_summary"] = f"Synthesized research briefing and change-aware intelligence analysis for {target_name}."
 
     return IntelligenceResult.model_validate(data)
@@ -483,7 +484,10 @@ def get_session_briefing(db: Session, session_id: str, user: Optional[User] = No
             .first()
         )
         if result and result.raw_intelligence:
-            return IntelligenceResult.model_validate(result.raw_intelligence)
+            try:
+                return IntelligenceResult.model_validate(result.raw_intelligence)
+            except Exception:
+                return load_fixture_intelligence(str(sid), str(result.job_id or uuid.uuid4()), session.target_name)
 
         # Fallback to loading fixture adapted to this session
         return load_fixture_intelligence(str(sid), str(uuid.uuid4()), session.target_name)

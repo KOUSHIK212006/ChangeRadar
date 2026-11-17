@@ -258,3 +258,108 @@ def test_end_to_end_api_and_worker_flow(client: TestClient, db_session: Session)
     claims_resp = client.get(f"/api/v1/research/{session_id}/claims", headers=headers)
     assert claims_resp.status_code == 200
     assert claims_resp.json()["total"] > 0
+
+    # 9. Retrieve briefing via API -> 200 OK (verifying mock processor produces valid IntelligenceResult)
+    briefing_resp = client.get(f"/api/v1/sessions/{session_id}/briefing", headers=headers)
+    assert briefing_resp.status_code == 200
+    briefing_data = briefing_resp.json()
+    assert briefing_data["status"] == "COMPLETED"
+    assert len(briefing_data["sources"]) > 0
+    assert len(briefing_data["events"]) > 0
+    assert len(briefing_data["claims"]) > 0
+
+
+def test_mock_processor_briefing_schema_compatibility(client: TestClient, db_session: Session):
+    """Regression Test (Phase 1): Ensure MockResearchProcessor persists valid IntelligenceResult contract.
+
+    Verifies:
+    1. Research session creation (/research) enqueues a job.
+    2. MockResearchProcessor claims and completes the job.
+    3. Structured results are persisted in ResearchResult and raw_intelligence.
+    4. Briefing endpoint (/sessions/{session_id}/briefing) returns HTTP 200 with valid IntelligenceResult.
+    5. Events endpoint (/research/{session_id}/events) returns HTTP 200 with events list.
+    6. Claims endpoint (/research/{session_id}/claims) returns HTTP 200 with claims list.
+    7. Result endpoint (/research/{session_id}/result) returns HTTP 200 with full result.
+    """
+    user = create_test_user(db_session, "mock_briefing_regression@changeradar.ai", "password123")
+    headers = get_auth_headers(client, "mock_briefing_regression@changeradar.ai", "password123")
+
+    # 1. Create personal research session
+    create_resp = client.post(
+        "/api/v1/research",
+        json={
+            "target_name": "Anthropic PBC",
+            "target_type": "company",
+            "meeting_context": "Pre-meeting technical evaluation and safety audit",
+            "time_window": "30 days",
+            "research_questions": ["What is their safety posture?", "Recent funding rounds?"],
+            "talking_points": ["Anthropic operates as a Public Benefit Corporation."],
+            "scope": "PERSONAL",
+        },
+        headers=headers,
+    )
+    assert create_resp.status_code == 201
+    sess_data = create_resp.json()
+    session_id = sess_data["session_id"]
+    job_id = sess_data["job_id"]
+
+    # 2. Worker executes job using MockResearchProcessor
+    worker = ResearchWorker(
+        worker_id="mock-compat-worker",
+        processor=MockResearchProcessor(simulate_delay=0.0),
+        session_factory=lambda: db_session,
+    )
+    processed = worker.process_next_job()
+    assert processed is True
+
+    # 3. Job status check -> COMPLETED
+    job_resp = client.get(f"/api/v1/jobs/{job_id}", headers=headers)
+    assert job_resp.status_code == 200
+    assert job_resp.json()["status"] == "COMPLETED"
+    assert job_resp.json()["progress_percent"] == 100
+
+    # 4. Result retrieval -> HTTP 200
+    result_resp = client.get(f"/api/v1/research/{session_id}/result", headers=headers)
+    assert result_resp.status_code == 200
+    result_json = result_resp.json()
+    assert result_json["research_status"] == "COMPLETED"
+    assert "Anthropic PBC" in result_json["summary"]
+
+    # 5. Briefing retrieval -> HTTP 200 (Previously failed with 404 due to schema mismatch)
+    briefing_resp = client.get(f"/api/v1/sessions/{session_id}/briefing", headers=headers)
+    assert briefing_resp.status_code == 200
+    briefing = briefing_resp.json()
+    assert briefing["session_id"] == session_id
+    assert briefing["job_id"] == job_id
+    assert briefing["status"] == "COMPLETED"
+    assert len(briefing["sources"]) >= 3
+    assert len(briefing["origins"]) >= 3
+    assert len(briefing["events"]) >= 2
+    assert len(briefing["claims"]) >= 3
+    assert briefing["coverage"] is not None
+    assert briefing["coverage"]["executed_searches"] >= 4
+    assert briefing["briefing_summary"] is not None
+    assert "Anthropic PBC" in briefing["briefing_summary"]
+
+    # 6. Events retrieval -> HTTP 200
+    events_resp = client.get(f"/api/v1/research/{session_id}/events", headers=headers)
+    assert events_resp.status_code == 200
+    events_json = events_resp.json()
+    assert events_json["total"] >= 2
+    assert len(events_json["events"]) >= 2
+    assert any("Anthropic PBC" in e.get("title", "") for e in events_json["events"])
+
+    # 7. Claims retrieval -> HTTP 200
+    claims_resp = client.get(f"/api/v1/research/{session_id}/claims", headers=headers)
+    assert claims_resp.status_code == 200
+    claims_json = claims_resp.json()
+    assert claims_json["total"] >= 3
+    assert len(claims_json["claims"]) >= 3
+
+    # 8. Filtered claims retrieval -> HTTP 200
+    filtered_claims = client.get(
+        f"/api/v1/research/{session_id}/claims?verification_status=SUPPORTED",
+        headers=headers,
+    )
+    assert filtered_claims.status_code == 200
+    assert filtered_claims.json()["total"] >= 1

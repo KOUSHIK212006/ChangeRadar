@@ -1,5 +1,6 @@
 """Research processor interface, intelligence engine processor, and mock implementation."""
 
+from datetime import datetime, timezone
 import logging
 import time
 import uuid
@@ -9,6 +10,22 @@ from app.models.enums import EvidenceVerificationStatus, ResearchResultStatus
 from app.models.research_job import ResearchJob
 from app.models.research_result import ResearchResult
 from app.models.research_session import ResearchSession
+from intelligence.contracts import (
+    ClaimVolatility,
+    CoverageReport,
+    EngineResultStatus,
+    EventLifecycle,
+    EvidenceAssessment,
+    EvidenceRecord,
+    EvidenceStance,
+    ExtractedClaim,
+    ExtractedEvent,
+    IntelligenceResult,
+    SourceOriginRecord,
+    SourceRecord,
+    StressTestPointResult,
+    StressTestResult,
+)
 
 logger = logging.getLogger("changeradar.worker.processor")
 
@@ -181,6 +198,16 @@ class MockResearchProcessor:
         """Simulate the multi-stage intelligence pipeline and produce a complete briefing."""
         target = session.target_name
         meeting_context = session.meeting_context or "General strategic briefing"
+        now = datetime.now(timezone.utc)
+        slug = target.lower().replace(" ", "-")
+
+        # Parse time_window string (e.g. "30 days") into an integer day count
+        time_window_days = 30
+        if session.time_window:
+            try:
+                time_window_days = int("".join(filter(str.isdigit, session.time_window))) or 30
+            except (ValueError, TypeError):
+                pass
 
         # Stage 1: Context Resolution
         self._report_progress(on_progress, "resolving_context", 15)
@@ -191,106 +218,193 @@ class MockResearchProcessor:
         # Stage 3: Source Retrieval & Origin Normalization
         self._report_progress(on_progress, "retrieving_sources", 55)
 
-        sources: List[Dict[str, Any]] = [
-            {
-                "id": str(uuid.uuid4()),
-                "title": f"Recent Corporate Disclosures and Market Movements for {target}",
-                "url": f"https://news.example.com/{target.lower().replace(' ', '-')}-filings",
-                "publisher": "Financial Gazette",
-                "published_at": "2026-11-01T12:00:00Z",
-                "origin_cluster_id": "cluster-origin-1",
-                "origin_type": "official_disclosure",
-            },
-            {
-                "id": str(uuid.uuid4()),
-                "title": f"{target} Leadership and Strategic Product Initiatives Update",
-                "url": f"https://tech.example.com/{target.lower().replace(' ', '-')}-product-roadmap",
-                "publisher": "Tech Wire",
-                "published_at": "2026-11-08T09:30:00Z",
-                "origin_cluster_id": "cluster-origin-2",
-                "origin_type": "industry_press",
-            },
-            {
-                "id": str(uuid.uuid4()),
-                "title": f"Independent Analyst Assessment of {target}'s Expansion",
-                "url": f"https://marketresearch.example.com/analysis/{target.lower().replace(' ', '-')}",
-                "publisher": "Alpha Capital Research",
-                "published_at": "2026-11-12T14:15:00Z",
-                "origin_cluster_id": "cluster-origin-3",
-                "origin_type": "analyst_report",
-            },
+        sources_records: List[SourceRecord] = [
+            SourceRecord(
+                source_id="src-mock-001",
+                url=f"https://news.example.com/{slug}-filings",
+                canonical_url=f"https://news.example.com/{slug}-filings",
+                title=f"Recent Corporate Disclosures and Market Movements for {target}",
+                publisher="Financial Gazette",
+                snippet=f"Official regulatory disclosures confirm {target} ongoing market operations and strategic expansion.",
+                published_at=now,
+                discovered_at=now,
+                is_syndicated=False,
+                syndication_confidence=0.0,
+            ),
+            SourceRecord(
+                source_id="src-mock-002",
+                url=f"https://tech.example.com/{slug}-product-roadmap",
+                canonical_url=f"https://tech.example.com/{slug}-product-roadmap",
+                title=f"{target} Leadership and Strategic Product Initiatives Update",
+                publisher="Tech Wire",
+                snippet=f"{target} has formalized enterprise delivery and partner channels across active regions.",
+                published_at=now,
+                discovered_at=now,
+                is_syndicated=False,
+                syndication_confidence=0.0,
+            ),
+            SourceRecord(
+                source_id="src-mock-003",
+                url=f"https://marketresearch.example.com/analysis/{slug}",
+                canonical_url=f"https://marketresearch.example.com/analysis/{slug}",
+                title=f"Independent Analyst Assessment of {target}'s Expansion",
+                publisher="Alpha Capital Research",
+                snippet=f"Analyst review highlights measured enterprise rollout and capital allocation for {target}.",
+                published_at=now,
+                discovered_at=now,
+                is_syndicated=False,
+                syndication_confidence=0.0,
+            ),
+        ]
+
+        origins_records: List[SourceOriginRecord] = [
+            SourceOriginRecord(
+                origin_id="org-mock-001",
+                label=f"{target} Official Disclosures",
+                source_ids=["src-mock-001"],
+                is_independent=False,
+                independence_confidence=0.9,
+            ),
+            SourceOriginRecord(
+                origin_id="org-mock-002",
+                label="Tech Wire Industry Reporting",
+                source_ids=["src-mock-002"],
+                is_independent=True,
+                independence_confidence=0.95,
+            ),
+            SourceOriginRecord(
+                origin_id="org-mock-003",
+                label="Alpha Capital Analyst Report",
+                source_ids=["src-mock-003"],
+                is_independent=True,
+                independence_confidence=0.95,
+            ),
         ]
 
         # Stage 4: Event Extraction & Claim Clustering
         self._report_progress(on_progress, "extracting_events_and_claims", 75)
 
-        key_developments: List[Dict[str, Any]] = [
-            {
-                "id": f"dev-{uuid.uuid4().hex[:8]}",
-                "title": f"Strategic Expansion and New Partnerships Announced by {target}",
-                "description": f"{target} has formalized enterprise agreements in key growth regions.",
-                "event_date": "2026-11-05",
-                "status": "DEVELOPING",
-                "sources": [sources[0]["id"], sources[1]["id"]],
-            },
-            {
-                "id": f"dev-{uuid.uuid4().hex[:8]}",
-                "title": f"Executive Leadership and Operational Realignment",
-                "description": f"Internal restructuring to optimize enterprise delivery and partner channels.",
-                "event_date": "2026-10-28",
-                "status": "COMPLETED",
-                "sources": [sources[1]["id"]],
-            },
+        events_records: List[ExtractedEvent] = [
+            ExtractedEvent(
+                event_id="evt-mock-001",
+                title=f"Strategic Expansion and New Partnerships Announced by {target}",
+                description=f"{target} has formalized enterprise agreements and partner integrations in key growth markets.",
+                summary=f"{target} expanded enterprise partner initiatives.",
+                category="EXPANSION",
+                lifecycle_status=EventLifecycle.DEVELOPING,
+                event_at=now,
+                published_at=now,
+                discovered_at=now,
+                is_disputed=False,
+                is_uncertain=False,
+                source_ids=["src-mock-001", "src-mock-002"],
+                origin_ids=["org-mock-001", "org-mock-002"],
+                claim_ids=["clm-mock-001", "clm-mock-002"],
+            ),
+            ExtractedEvent(
+                event_id="evt-mock-002",
+                title=f"Executive Leadership and Operational Realignment",
+                description=f"Internal restructuring to optimize enterprise delivery and partner channels at {target}.",
+                summary=f"Leadership realignment at {target}.",
+                category="LEADERSHIP",
+                lifecycle_status=EventLifecycle.COMPLETED,
+                event_at=now,
+                published_at=now,
+                discovered_at=now,
+                is_disputed=False,
+                is_uncertain=False,
+                source_ids=["src-mock-002"],
+                origin_ids=["org-mock-002"],
+                claim_ids=["clm-mock-002"],
+            ),
         ]
 
-        claims_and_evidence: List[Dict[str, Any]] = [
-            {
-                "id": f"claim-{uuid.uuid4().hex[:8]}",
-                "claim": f"{target} expanded into international markets with new enterprise pilots.",
-                "verification_status": EvidenceVerificationStatus.SUPPORTED.value,
-                "rationale": "Directly confirmed by official regulatory filings and partner announcements.",
-                "evidence": "Filing indicates 3 enterprise pilots launched in October 2026.",
-                "source_urls": [sources[0]["url"]],
-            },
-            {
-                "id": f"claim-{uuid.uuid4().hex[:8]}",
-                "claim": f"{target} has fully replaced its core platform infrastructure.",
-                "verification_status": EvidenceVerificationStatus.PARTIALLY_SUPPORTED.value,
-                "rationale": "Migration is underway across pilot accounts, but full platform rollout is ongoing.",
-                "evidence": "Analyst report notes progressive rollout across Q4.",
-                "source_urls": [sources[2]["url"]],
-            },
-            {
-                "id": f"claim-{uuid.uuid4().hex[:8]}",
-                "claim": f"{target} announced imminent plans for an initial public offering.",
-                "verification_status": EvidenceVerificationStatus.CONTRADICTED.value,
-                "rationale": "Leadership explicitly denied near-term IPO speculation in public remarks.",
-                "evidence": "Official statement explicitly refuted IPO timing rumors.",
-                "source_urls": [sources[1]["url"]],
-            },
+        claims_records: List[ExtractedClaim] = [
+            ExtractedClaim(
+                claim_id="clm-mock-001",
+                text=f"{target} expanded into international markets with new enterprise pilots.",
+                assessment=EvidenceAssessment.SUPPORTED,
+                assessment_rationale="Directly confirmed by official regulatory filings and partner announcements.",
+                evidence=[
+                    EvidenceRecord(
+                        evidence_id="ev-mock-001",
+                        excerpt=f"Filing indicates 3 enterprise pilots launched in October 2026 for {target}.",
+                        source_id="src-mock-001",
+                        relevance=EvidenceStance.SUPPORTING,
+                    )
+                ],
+                source_doc_count=2,
+                independent_origin_count=2,
+                volatility=ClaimVolatility.LOW,
+                is_stale=False,
+                llm_confidence=0.95,
+            ),
+            ExtractedClaim(
+                claim_id="clm-mock-002",
+                text=f"{target} has fully replaced its core platform infrastructure.",
+                assessment=EvidenceAssessment.PARTIALLY_SUPPORTED,
+                assessment_rationale="Migration is underway across pilot accounts, but full platform rollout is ongoing.",
+                evidence=[
+                    EvidenceRecord(
+                        evidence_id="ev-mock-002",
+                        excerpt="Analyst report notes progressive rollout across Q4.",
+                        source_id="src-mock-003",
+                        relevance=EvidenceStance.CONTEXTUAL,
+                    )
+                ],
+                source_doc_count=1,
+                independent_origin_count=1,
+                volatility=ClaimVolatility.MEDIUM,
+                is_stale=False,
+                llm_confidence=0.88,
+            ),
+            ExtractedClaim(
+                claim_id="clm-mock-003",
+                text=f"{target} announced imminent plans for an initial public offering.",
+                assessment=EvidenceAssessment.CONTRADICTED,
+                assessment_rationale="Leadership explicitly denied near-term IPO speculation in public remarks.",
+                evidence=[
+                    EvidenceRecord(
+                        evidence_id="ev-mock-003",
+                        excerpt="Official statement explicitly refuted IPO timing rumors.",
+                        source_id="src-mock-002",
+                        relevance=EvidenceStance.CONTRADICTING,
+                    )
+                ],
+                source_doc_count=1,
+                independent_origin_count=1,
+                volatility=ClaimVolatility.HIGH,
+                is_stale=False,
+                llm_confidence=0.92,
+            ),
         ]
+
+        coverage_report = CoverageReport(
+            planned_searches=4,
+            executed_searches=4,
+            failed_searches=0,
+            time_window_days=time_window_days,
+            source_types_found=["official_disclosure", "industry_press", "analyst_report"],
+            origin_diversity_score=1.0,
+            gaps=[],
+            warnings=[],
+        )
 
         # Stage 5: Talking Points Stress-Testing (if supplied)
-        talking_points_analysis: List[Dict[str, Any]] = []
+        stress_test: Optional[StressTestResult] = None
         if session.talking_points:
+            points: List[StressTestPointResult] = []
             for pt in session.talking_points:
-                talking_points_analysis.append({
-                    "original_talking_point": pt,
-                    "extracted_claim": pt,
-                    "verification_status": EvidenceVerificationStatus.SUPPORTED.value,
-                    "assessment": f"Grounding verified against current research for {target}.",
-                    "suggested_wording": f"{pt} (as confirmed by recent Q4 disclosures).",
-                    "sources": [sources[0]["url"]],
-                })
-
-        coverage_report: Dict[str, Any] = {
-            "searches_planned": 4,
-            "searches_executed": 4,
-            "sources_evaluated": 12,
-            "independent_origins_identified": 3,
-            "known_gaps": [],
-            "limitations": "Data limited to publicly accessible filings and industry press up to discovery date.",
-        }
+                points.append(
+                    StressTestPointResult(
+                        original_point=pt,
+                        extracted_claims=[pt],
+                        assessments=[claims_records[0]],
+                        suggested_wording=f"{pt} (as confirmed by recent Q4 disclosures).",
+                        needs_more_research=False,
+                    )
+                )
+            stress_test = StressTestResult(points=points)
 
         # Stage 6: Briefing Synthesis
         self._report_progress(on_progress, "synthesizing_briefing", 95)
@@ -305,23 +419,78 @@ class MockResearchProcessor:
             f"Confidence: High evidence traceability across 3 independent publisher origins."
         )
 
+        # Build fully valid typed IntelligenceResult matching contracts schema
+        intelligence_result = IntelligenceResult(
+            session_id=str(session.id),
+            job_id=str(job.id),
+            status=EngineResultStatus.COMPLETED,
+            briefing_summary=summary,
+            sources=sources_records,
+            origins=origins_records,
+            events=events_records,
+            event_versions=[],
+            claims=claims_records,
+            coverage=coverage_report,
+            delta=None,
+            stress_test=stress_test,
+            warnings=[],
+            provider_metadata={
+                "engine": "MockResearchProcessor",
+                "target": target,
+                "run_at": now.isoformat(),
+            },
+        )
+
+        # Map into dual-compatible dictionaries for both API response models:
+        key_developments = []
+        for e in intelligence_result.events:
+            d = e.model_dump(mode="json")
+            d["id"] = e.event_id
+            d["event_date"] = e.event_at.strftime("%Y-%m-%d") if e.event_at else "2026-11-05"
+            d["status"] = e.lifecycle_status
+            d["sources"] = e.source_ids
+            key_developments.append(d)
+
+        claims_and_evidence = []
+        for c in intelligence_result.claims:
+            d = c.model_dump(mode="json")
+            d["id"] = c.claim_id
+            d["claim"] = c.text
+            d["verification_status"] = c.assessment
+            d["rationale"] = c.assessment_rationale
+            d["evidence"] = c.evidence[0].excerpt if c.evidence else ""
+            d["source_urls"] = [s.url for s in sources_records if s.source_id in [ev.source_id for ev in c.evidence]]
+            claims_and_evidence.append(d)
+
+        sources_list = []
+        for s in intelligence_result.sources:
+            d = s.model_dump(mode="json")
+            d["id"] = s.source_id
+            sources_list.append(d)
+
+        talking_points_analysis = []
+        if intelligence_result.stress_test:
+            for p in intelligence_result.stress_test.points:
+                d = p.model_dump(mode="json")
+                d["original_talking_point"] = p.original_point
+                d["extracted_claim"] = p.extracted_claims[0] if p.extracted_claims else p.original_point
+                d["verification_status"] = EvidenceVerificationStatus.SUPPORTED.value
+                d["assessment"] = f"Grounding verified against current research for {target}."
+                talking_points_analysis.append(d)
+
         result = ResearchResult(
             session_id=session.id,
             job_id=job.id,
             research_status=ResearchResultStatus.COMPLETED,
             summary=summary,
             key_developments=key_developments,
-            sources=sources,
+            sources=sources_list,
             claims_and_evidence=claims_and_evidence,
-            coverage_report=coverage_report,
+            coverage_report=coverage_report.model_dump(mode="json"),
             talking_points_analysis=talking_points_analysis,
             is_delta=False,
             is_reviewed=False,
-            raw_intelligence={
-                "engine": "MockResearchEngine-v1",
-                "target": target,
-                "execution_timestamp": time.time(),
-            },
+            raw_intelligence=intelligence_result.model_dump(mode="json"),
         )
 
         return result
