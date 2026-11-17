@@ -39,7 +39,7 @@ from intelligence.pipeline.normalizer import normalize
 from intelligence.pipeline.planner import plan
 from intelligence.pipeline.stress_test import run as run_stress_test
 from intelligence.providers.base import LLMParseError, QuotaExhaustedError, SearchProviderError
-from intelligence.providers.llm import get_llm_provider
+from intelligence.providers.llm import BifrostLLMProvider, get_llm_provider
 from intelligence.providers.tavily import TavilySearchProvider
 
 logger = logging.getLogger("changeradar.intelligence.engine")
@@ -64,6 +64,26 @@ def _run_live_pipeline(request: ResearchRequest) -> IntelligenceResult:
 
     search_provider = TavilySearchProvider()
     llm_provider = get_llm_provider()
+
+    # Diagnostic verification of mandatory external integrations
+    search_api_key = getattr(search_provider, "_api_key", None)
+    if search_api_key is not None and not search_api_key:
+        missing_tavily = "TAVILY_API_KEY is not configured. Live search cannot proceed without a valid Tavily API key."
+        logger.warning(missing_tavily)
+        warnings.append(missing_tavily)
+
+    if getattr(llm_provider, "provider_name", None) == "bifrost":
+        if not getattr(llm_provider, "_base_url", None):
+            missing_url = "BIFROST_BASE_URL is not configured for centralized LLM gateway routing."
+            logger.warning(missing_url)
+            warnings.append(missing_url)
+        if not getattr(llm_provider, "_bifrost_api_key", None) and not getattr(llm_provider, "_upstream_key", None):
+            missing_bifrost = (
+                "Neither BIFROST_API_KEY (gateway token) nor GEMINI_API_KEY (upstream model token) "
+                "is configured. Bifrost gateway requests will fail authentication unless configured internally."
+            )
+            logger.warning(missing_bifrost)
+            warnings.append(missing_bifrost)
 
     # 1. Stage A: Plan (1 LLM call)
     research_plan = plan(request.context, llm_provider)
@@ -257,8 +277,11 @@ def _provider_metadata(tracker: Optional[LLMUsageTracker] = None) -> dict:
         "search_provider": "tavily",
         "llm_provider": intelligence_settings.LLM_PROVIDER,
         "llm_model": intelligence_settings.LLM_MODEL,
+        "gateway": "bifrost" if intelligence_settings.LLM_PROVIDER == "bifrost" else "direct",
         "run_at": datetime.now(timezone.utc).isoformat(),
     }
+    if intelligence_settings.LLM_PROVIDER == "bifrost":
+        meta["gateway_url"] = intelligence_settings.BIFROST_BASE_URL
     if tracker:
         summary = tracker.get_summary()
         meta["llm_usage"] = summary.model_dump()

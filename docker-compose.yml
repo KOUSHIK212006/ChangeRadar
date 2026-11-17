@@ -45,7 +45,10 @@ services:
       - CORS_ORIGINS=http://localhost:5173,http://localhost:80,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:80
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-radar-production-secret-key-at-least-32-chars-long}
       - INTELLIGENCE_FIXTURE_MODE=${INTELLIGENCE_FIXTURE_MODE:-true}
-      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - LLM_PROVIDER=${LLM_PROVIDER:-bifrost}
+      - BIFROST_BASE_URL=${BIFROST_BASE_URL:-http://localhost:8080}
+      - BIFROST_API_KEY=${BIFROST_API_KEY:-}
+      - BIFROST_MODEL=${BIFROST_MODEL:-gemini/gemini-1.5-flash}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-1.5-flash}
       - TAVILY_API_KEY=${TAVILY_API_KEY:-}
@@ -79,7 +82,10 @@ services:
       - LOG_LEVEL=INFO
       - DATABASE_URL=postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-changeradar}
       - INTELLIGENCE_FIXTURE_MODE=${INTELLIGENCE_FIXTURE_MODE:-true}
-      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - LLM_PROVIDER=${LLM_PROVIDER:-bifrost}
+      - BIFROST_BASE_URL=${BIFROST_BASE_URL:-http://localhost:8080}
+      - BIFROST_API_KEY=${BIFROST_API_KEY:-}
+      - BIFROST_MODEL=${BIFROST_MODEL:-gemini/gemini-1.5-flash}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-1.5-flash}
       - TAVILY_API_KEY=${TAVILY_API_KEY:-}

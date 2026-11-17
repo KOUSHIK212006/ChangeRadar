@@ -457,6 +457,7 @@ def test_failure_and_edge_cases(client: TestClient, db_session: Session):
 
 def test_search_and_llm_resilience():
     """Verify intelligence engine resilience when search returns empty or external provider throttles."""
+    from unittest.mock import patch
     mock_llm = DeterministicE2EMockLLM()
 
     # Test search provider error handling in engine
@@ -476,7 +477,10 @@ def test_search_and_llm_resilience():
         ),
     )
 
-    result = _run_live_pipeline(req)
+    with patch("intelligence.engine.get_llm_provider", return_value=mock_llm), patch(
+        "intelligence.engine.TavilySearchProvider", return_value=FailingSearchProvider()
+    ):
+        result = _run_live_pipeline(req)
     assert result is not None
     assert result.status in ["COMPLETED", "PARTIAL"]
     assert len(result.coverage.warnings) > 0 or len(result.warnings) > 0
@@ -488,6 +492,7 @@ def test_search_and_llm_resilience():
 
 def test_llm_cost_and_performance_bounds():
     """Verify that intelligence runs make <= 6 LLM calls and verify cache hits on repeated requests."""
+    from unittest.mock import MagicMock, patch
     cache = get_cache()
     cache.clear()
 
@@ -495,6 +500,20 @@ def test_llm_cost_and_performance_bounds():
     set_current_tracker(tracker)
 
     mock_llm = DeterministicE2EMockLLM()
+
+    mock_search = MagicMock()
+    mock_search.search.return_value = [
+        SourceRecord(
+            source_id="src-001",
+            url="https://example.com/1",
+            canonical_url="https://example.com/1",
+            title="BioSynthetix Q3 Report",
+            publisher="example.com",
+            snippet="BioSynthetix reported positive Phase 2 results for BX-901.",
+            published_at=datetime.now(timezone.utc),
+            discovered_at=datetime.now(timezone.utc),
+        )
+    ]
 
     # 1. Standard Run
     req = ResearchRequest(
@@ -508,7 +527,10 @@ def test_llm_cost_and_performance_bounds():
         talking_points=["BioSynthetix has confirmed FDA approval for BX-901"],
     )
 
-    result = _run_live_pipeline(req)
+    with patch("intelligence.engine.get_llm_provider", return_value=mock_llm), patch(
+        "intelligence.engine.TavilySearchProvider", return_value=mock_search
+    ):
+        result = _run_live_pipeline(req)
     assert result is not None
 
     # Total physical LLM calls must be within budget (<= 6 calls)

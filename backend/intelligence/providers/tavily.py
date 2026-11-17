@@ -6,8 +6,11 @@ Syndication detection happens later in the normalizer pipeline stage.
 
 import hashlib
 import logging
+import random
+import time
 from datetime import datetime, timezone
-from urllib.parse import urlencode, urlparse, urlunparse, parse_qs
+from typing import Optional
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 
@@ -40,14 +43,25 @@ def _parse_publisher(url: str) -> str:
 
 
 class TavilySearchProvider(SearchProvider):
-    def __init__(self, api_key: str | None = None, max_results: int | None = None, timeout: int | None = None):
-        self._api_key = api_key or intelligence_settings.TAVILY_API_KEY
+    def __init__(
+        self,
+        api_key: str | None = None,
+        max_results: int | None = None,
+        timeout: int | None = None,
+        max_retries: int | None = None,
+        backoff_base: float | None = None,
+        backoff_max: float | None = None,
+    ):
+        self._api_key = intelligence_settings.TAVILY_API_KEY if api_key is None else api_key
         self._max_results = max_results or intelligence_settings.SEARCH_MAX_RESULTS
         self._timeout = timeout or intelligence_settings.SEARCH_TIMEOUT_SECONDS
+        self._max_retries = max_retries if max_retries is not None else intelligence_settings.MAX_RETRIES
+        self._backoff_base = backoff_base if backoff_base is not None else intelligence_settings.RETRY_BACKOFF_BASE
+        self._backoff_max = backoff_max if backoff_max is not None else intelligence_settings.RETRY_BACKOFF_MAX
 
     def search(self, query: str, context: ResearchContext) -> list[SourceRecord]:
         if not self._api_key:
-            raise SearchProviderError("TAVILY_API_KEY is not configured.")
+            raise SearchProviderError("TAVILY_API_KEY is not configured in environment or .env.")
 
         payload = {
             "api_key": self._api_key,
@@ -58,16 +72,94 @@ class TavilySearchProvider(SearchProvider):
             "max_results": self._max_results,
         }
 
-        try:
-            response = httpx.post(TAVILY_SEARCH_URL, json=payload, timeout=self._timeout)
-            response.raise_for_status()
-            data = response.json()
-        except httpx.TimeoutException as exc:
-            raise SearchProviderError(f"Tavily request timed out: {exc}") from exc
-        except httpx.HTTPStatusError as exc:
-            raise SearchProviderError(f"Tavily returned HTTP {exc.response.status_code}: {exc.response.text}") from exc
-        except Exception as exc:
-            raise SearchProviderError(f"Unexpected error calling Tavily: {exc}") from exc
+        last_exc: Optional[Exception] = None
+
+        for attempt in range(self._max_retries + 1):
+            try:
+                response = httpx.post(TAVILY_SEARCH_URL, json=payload, timeout=self._timeout)
+                status_code = response.status_code
+
+                if status_code == 429:
+                    retry_after_hdr = response.headers.get("Retry-After")
+                    retry_after_val: Optional[float] = None
+                    if retry_after_hdr:
+                        try:
+                            retry_after_val = float(retry_after_hdr)
+                        except ValueError:
+                            pass
+
+                    if attempt < self._max_retries:
+                        backoff = min(
+                            self._backoff_max,
+                            retry_after_val or (self._backoff_base ** attempt + random.uniform(0.1, 0.5)),
+                        )
+                        logger.warning(
+                            f"Tavily 429 rate limit reached (attempt {attempt + 1}/{self._max_retries + 1}). "
+                            f"Retrying in {backoff:.2f}s..."
+                        )
+                        time.sleep(backoff)
+                        continue
+                    else:
+                        raise SearchProviderError(
+                            f"Tavily rate limit (HTTP 429) exceeded after {self._max_retries + 1} attempts."
+                        )
+
+                elif status_code in (401, 403):
+                    # Permanent auth error - do not retry
+                    raise SearchProviderError(
+                        f"Tavily authentication failed (HTTP {status_code}): {response.text}"
+                    )
+                elif status_code == 400:
+                    # Permanent client request error - do not retry
+                    raise SearchProviderError(
+                        f"Tavily bad request (HTTP 400): {response.text}"
+                    )
+                elif status_code >= 500:
+                    # Transient server error - retry with backoff
+                    if attempt < self._max_retries:
+                        backoff = min(
+                            self._backoff_max,
+                            self._backoff_base ** attempt + random.uniform(0.1, 0.5),
+                        )
+                        logger.warning(
+                            f"Tavily server error ({status_code}) on attempt {attempt + 1}, retrying in {backoff:.2f}s..."
+                        )
+                        time.sleep(backoff)
+                        continue
+                    else:
+                        raise SearchProviderError(
+                            f"Tavily server error (HTTP {status_code}) after {self._max_retries + 1} attempts: {response.text}"
+                        )
+
+                response.raise_for_status()
+                data = response.json()
+                break
+
+            except (SearchProviderError,):
+                raise
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                last_exc = exc
+                if attempt < self._max_retries:
+                    backoff = min(
+                        self._backoff_max,
+                        self._backoff_base ** attempt + random.uniform(0.1, 0.5),
+                    )
+                    logger.warning(
+                        f"Tavily network/timeout error (attempt {attempt + 1}/{self._max_retries + 1}), "
+                        f"retrying in {backoff:.2f}s: {exc}"
+                    )
+                    time.sleep(backoff)
+                    continue
+                else:
+                    raise SearchProviderError(
+                        f"Tavily request failed after {self._max_retries + 1} attempts due to network/timeout: {exc}"
+                    ) from exc
+            except Exception as exc:
+                raise SearchProviderError(f"Unexpected error calling Tavily: {exc}") from exc
+        else:
+            raise SearchProviderError(
+                f"Tavily request failed after {self._max_retries + 1} attempts: {last_exc}"
+            )
 
         discovered_at = datetime.now(timezone.utc)
         records: list[SourceRecord] = []

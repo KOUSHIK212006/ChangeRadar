@@ -373,6 +373,116 @@ class GroqLLMProvider(BaseLLMProvider):
             raise TransientLLMError(f"Unexpected error communicating with Groq: {exc}") from exc
 
 
+class BifrostLLMProvider(BaseLLMProvider):
+    """Bifrost centralized LLM gateway provider adapter (Maxim AI).
+
+    Routes all LLM requests through the centralized Bifrost gateway using its
+    OpenAI-compatible chat completions interface (/v1/chat/completions).
+    Forwards upstream Gemini credentials (x-goog-api-key) and gateway authorization
+    (Authorization: Bearer <BIFROST_API_KEY>) as appropriate.
+    """
+
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        upstream_key: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        timeout: Optional[int] = None,
+        max_retries: Optional[int] = None,
+    ):
+        self._base_url = (base_url or intelligence_settings.BIFROST_BASE_URL).rstrip("/")
+        self._bifrost_api_key = api_key or intelligence_settings.BIFROST_API_KEY
+        self._upstream_key = upstream_key or intelligence_settings.GEMINI_API_KEY
+        effective_key = self._bifrost_api_key or self._upstream_key
+
+        resolved_model = model or intelligence_settings.LLM_MODEL
+
+        super().__init__(
+            provider_name="bifrost",
+            api_key=effective_key,
+            model=resolved_model,
+            temperature=temperature if temperature is not None else intelligence_settings.LLM_TEMPERATURE,
+            timeout=timeout or intelligence_settings.LLM_TIMEOUT_SECONDS,
+            max_retries=max_retries if max_retries is not None else intelligence_settings.MAX_RETRIES,
+        )
+
+    def _call_api(self, system_prompt: str, user_prompt: str) -> Tuple[str, int, int]:
+        if not self._base_url:
+            raise PermanentLLMError("BIFROST_BASE_URL is not configured.")
+
+        url = f"{self._base_url}/v1/chat/completions"
+
+        headers = {
+            "Content-Type": "application/json",
+        }
+        if self._bifrost_api_key:
+            headers["Authorization"] = f"Bearer {self._bifrost_api_key}"
+            headers["x-bf-vk"] = self._bifrost_api_key
+        if self._upstream_key:
+            headers["x-goog-api-key"] = self._upstream_key
+            if "Authorization" not in headers:
+                headers["Authorization"] = f"Bearer {self._upstream_key}"
+
+        payload = {
+            "model": self._model,
+            "temperature": self._temperature,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "response_format": {"type": "json_object"},
+        }
+
+        try:
+            response = httpx.post(url, json=payload, headers=headers, timeout=self._timeout)
+            status_code = response.status_code
+
+            if status_code == 429:
+                retry_after_hdr = response.headers.get("Retry-After")
+                retry_after_val: Optional[float] = None
+                if retry_after_hdr:
+                    try:
+                        retry_after_val = float(retry_after_hdr)
+                    except ValueError:
+                        pass
+                raise QuotaExhaustedError(
+                    f"Bifrost Gateway 429 Quota Exhausted: {response.text}",
+                    retry_after=retry_after_val,
+                )
+            elif status_code in (401, 403):
+                raise PermanentLLMError(f"Bifrost Gateway Auth Error ({status_code}): {response.text}")
+            elif status_code == 400:
+                raise PermanentLLMError(f"Bifrost Bad Request (400): {response.text}")
+            elif status_code >= 500:
+                raise TransientLLMError(f"Bifrost Gateway Server Error ({status_code}): {response.text}")
+
+            response.raise_for_status()
+            res_json = response.json()
+
+            choices = res_json.get("choices", [])
+            if not choices:
+                raise LLMParseError("Bifrost returned empty choices list.")
+
+            content = choices[0].get("message", {}).get("content", "")
+            if not content:
+                raise LLMParseError("Bifrost returned empty message content.")
+
+            usage = res_json.get("usage", {})
+            in_tok = usage.get("prompt_tokens", len(user_prompt) // 4)
+            out_tok = usage.get("completion_tokens", len(content) // 4)
+
+            return content, in_tok, out_tok
+
+        except (QuotaExhaustedError, PermanentLLMError, TransientLLMError, LLMParseError):
+            raise
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            raise TransientLLMError(f"Bifrost gateway network error: {exc}") from exc
+        except Exception as exc:
+            raise TransientLLMError(f"Unexpected error communicating with Bifrost gateway: {exc}") from exc
+
+
 # Alias for backward-compatibility
 OpenAILLMProvider = GroqLLMProvider
 
@@ -382,14 +492,24 @@ def get_llm_provider(
     api_key: Optional[str] = None,
     model: Optional[str] = None,
 ) -> BaseLLMProvider:
-    """Factory creating configured LLM provider instance."""
+    """Factory creating configured LLM provider instance.
+    
+    Default in production is Bifrost, routing all requests through the centralized gateway.
+    """
     provider = (provider_name or intelligence_settings.LLM_PROVIDER).lower()
 
-    if provider == "gemini":
+    if provider == "bifrost":
+        return BifrostLLMProvider(
+            base_url=intelligence_settings.BIFROST_BASE_URL,
+            api_key=api_key or intelligence_settings.BIFROST_API_KEY,
+            upstream_key=intelligence_settings.GEMINI_API_KEY,
+            model=model or intelligence_settings.LLM_MODEL,
+        )
+    elif provider == "gemini":
         return GeminiLLMProvider(api_key=api_key, model=model)
     elif provider in ("groq", "openai"):
         return GroqLLMProvider(api_key=api_key, model=model)
     else:
         raise ValueError(
-            f"Unsupported LLM provider '{provider}'. Supported providers are: 'gemini', 'groq', 'openai'."
+            f"Unsupported LLM provider '{provider}'. Supported providers are: 'bifrost', 'gemini', 'groq', 'openai'."
         )

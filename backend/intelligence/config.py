@@ -1,20 +1,38 @@
 """Configuration for the intelligence engine — loaded from environment or .env file."""
 
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_backend_dir = Path(__file__).resolve().parent.parent
+_root_dir = _backend_dir.parent
+_env_files = [
+    str(_backend_dir / ".env"),
+    str(_root_dir / ".env"),
+    ".env",
+]
 
 
 class IntelligenceSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_file=_env_files,
+        extra="ignore",
+        case_sensitive=False,
+    )
 
-    # API Keys
+    # API Keys & Credentials
     GEMINI_API_KEY: str = ""
     GROQ_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
     TAVILY_API_KEY: str = ""
 
+    # Centralized LLM Gateway (Bifrost)
+    BIFROST_BASE_URL: str = "http://localhost:8088"
+    BIFROST_API_KEY: str = ""
+    BIFROST_MODEL: str = "gemini/gemini-3.5-flash-lite"
+
     # Provider & Model Selection
-    LLM_PROVIDER: str = "gemini"  # "gemini" | "groq" | "openai"
-    GEMINI_MODEL: str = "gemini-1.5-flash"
+    LLM_PROVIDER: str = "bifrost"  # "bifrost" | "gemini" | "groq" | "openai"
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
     OPENAI_MODEL: str = "gpt-4o-mini"
     INTELLIGENCE_LLM_MODEL: str = ""
@@ -46,13 +64,15 @@ class IntelligenceSettings(BaseSettings):
     def LLM_MODEL(self) -> str:
         if self.INTELLIGENCE_LLM_MODEL:
             return self.INTELLIGENCE_LLM_MODEL
+        if self.LLM_PROVIDER == "bifrost":
+            return self.BIFROST_MODEL or f"gemini/{self.GEMINI_MODEL}"
         if self.LLM_PROVIDER == "gemini":
             return self.GEMINI_MODEL
         elif self.LLM_PROVIDER == "groq":
             return self.GROQ_MODEL
         elif self.LLM_PROVIDER == "openai":
             return self.OPENAI_MODEL
-        return self.GEMINI_MODEL
+        return self.BIFROST_MODEL
 
     @property
     def LLM_TEMPERATURE(self) -> float:
