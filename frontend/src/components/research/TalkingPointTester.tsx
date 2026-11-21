@@ -82,7 +82,7 @@ export const TalkingPointTester: React.FC<TalkingPointTesterProps> = ({
           rows={3}
           value={talkingPointsText}
           onChange={(e) => setTalkingPointsText(e.target.value)}
-          placeholder={`e.g.\nAcme Corp achieved 20% revenue growth in Q3.\nThey have already finalized a permanent CFO successor.`}
+          placeholder={`e.g.\nMapmyIndia suffered financial decline after Ola launched Ola Maps.\nMapmyIndia served a formal legal notice to Ola Electric alleging breach of their agreement.`}
           className="radar-input w-full text-xs font-mono resize-y"
         />
 

@@ -8,7 +8,7 @@ const getInitialMockMode = (): boolean => {
   if (stored !== null) {
     return stored === 'true';
   }
-  return import.meta.env.VITE_USE_MOCK_DATA !== 'false';
+  return import.meta.env.VITE_USE_MOCK_DATA === 'true';
 };
 
 let useMockDataState: boolean = getInitialMockMode();

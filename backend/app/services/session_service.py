@@ -66,20 +66,20 @@ def seed_initial_sessions_if_empty(db: Session) -> None:
 
     s1 = ResearchSession(
         id=s1_id,
-        title="Acme Corp — Pre-Meeting Intelligence",
-        target_name="Acme Corp",
+        title="MapmyIndia (C.E. Info Systems) — Pre-Meeting Intelligence",
+        target_name="MapmyIndia (C.E. Info Systems)",
         target_type="company",
-        meeting_context="Quarterly review and expansion strategy evaluation",
-        time_window="30",
+        meeting_context="Commercial enterprise partnership review & Q2 audited operational performance",
+        time_window="14",
         research_questions=[
-            "What recent executive changes have occurred?",
-            "What is the verified revenue growth rate?",
-            "What are their expansion plans in APAC?",
+            "What is the status of the Ola Maps intellectual property dispute?",
+            "What is the verified revenue growth rate and order book size?",
+            "What are their expansion plans in automotive ADAS and drone mapping?",
         ],
         talking_points=[
-            "Acme Corp is aggressively expanding into APAC",
-            "Acme Corp revenue grew 20% year-over-year",
-            "A permanent CFO has been hired to steady operations",
+            "MapmyIndia served formal legal notice to Ola Electric regarding Ola Maps IP",
+            "MapmyIndia revenue grew 22% year-over-year to ₹463.3 Crore",
+            "Open enterprise order book reached ₹1,500 Crore",
         ],
         scope=OwnershipScope.PERSONAL,
         owner_user_id=DEMO_USER_ID,
@@ -101,14 +101,14 @@ def seed_initial_sessions_if_empty(db: Session) -> None:
         updated_at=now,
     )
 
-    intel = load_fixture_intelligence(str(s1_id), str(j1_id), "Acme Corp")
+    intel = load_fixture_intelligence(str(s1_id), str(j1_id), "MapmyIndia (C.E. Info Systems)")
 
     r1 = ResearchResult(
         id=r1_id,
         session_id=s1_id,
         job_id=j1_id,
         research_status=ResearchResultStatus.COMPLETED,
-        summary="Acme Corp announced APAC regional HQ in Singapore for Q1 2025. Financial Times reports Q3 revenue grew 14% (missing 18% consensus). CFO resigned; interim appointed while search continues.",
+        summary="MapmyIndia (C.E. Info Systems) delivered 22% annual operational revenue growth to ₹463.3 crore with ~40% EBITDA margins and a ₹1,500 crore open order book. Disputed Ola Maps licensing breach remains active while ADAS Level 2+ adoption accelerates.",
         key_developments=[e.model_dump(mode="json") for e in intel.events],
         sources=[s.model_dump(mode="json") for s in intel.sources],
         claims_and_evidence=[c.model_dump(mode="json") for c in intel.claims],
@@ -417,20 +417,45 @@ def create_session_and_job(
         updated_at=now,
     )
 
-    intel = load_fixture_intelligence(str(s_id), str(j_id), payload.target_name)
+    from intelligence.config import intelligence_settings
+    if intelligence_settings.USE_FIXTURE_MODE:
+        intel = load_fixture_intelligence(str(s_id), str(j_id), payload.target_name)
+    else:
+        from intelligence.contracts import ResearchContext, ResearchRequest
+        from intelligence.engine import run_intelligence_engine
+
+        time_window_num = 14
+        if payload.time_window_days:
+            time_window_num = int(payload.time_window_days)
+
+        req = ResearchRequest(
+            session_id=str(s_id),
+            job_id=str(j_id),
+            context=ResearchContext(
+                target_name=payload.target_name,
+                target_type=payload.target_type or "company",
+                meeting_objective=payload.meeting_context or "General strategic briefing",
+                time_window_days=time_window_num,
+                research_questions=payload.research_questions or [],
+                talking_points=payload.talking_points or [],
+            ),
+            baseline=None,
+        )
+        intel = run_intelligence_engine(req)
 
     result = ResearchResult(
         id=r_id,
         session_id=s_id,
         job_id=j_id,
         research_status=ResearchResultStatus.COMPLETED,
-        summary=f"Intelligence briefing for {payload.target_name}. Analyzed claims, verified origins, and evaluated key developments against evidence.",
+        summary=intel.briefing_summary or f"Intelligence briefing for {payload.target_name}. Analyzed claims, verified origins, and evaluated key developments against evidence.",
         key_developments=[e.model_dump(mode="json") for e in intel.events],
         sources=[s.model_dump(mode="json") for s in intel.sources],
         claims_and_evidence=[c.model_dump(mode="json") for c in intel.claims],
         coverage_report=intel.coverage.model_dump(mode="json"),
         talking_points_analysis=[p.model_dump(mode="json") for p in intel.stress_test.points] if intel.stress_test else [],
-        is_delta=False,
+        is_delta=intel.delta is not None,
+        delta_summary=intel.delta.model_dump(mode="json") if intel.delta else None,
         raw_intelligence=intel.model_dump(mode="json"),
         is_reviewed=False,
         created_at=now,

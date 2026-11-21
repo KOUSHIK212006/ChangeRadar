@@ -79,6 +79,7 @@ def _build_batch_prompt(
     return (
         f"Research Target: {context.target_name}\n"
         f"Meeting Objective: {context.meeting_objective}\n"
+        "Current Reference Date: November 21, 2026\n"
         f"Time Window: Last {context.time_window_days} days\n\n"
         f"Sources ({len(articles)} documents):\n{json.dumps(articles, indent=2)}\n\n"
         "Return JSON in this exact structure:\n"

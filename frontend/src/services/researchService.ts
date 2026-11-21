@@ -94,8 +94,13 @@ export const researchService = {
       return newSession;
     }
 
-    const response = await apiClient.post<ResearchSession>('/sessions', payload);
-    return response.data;
+    const response = await apiClient.post<any>('/sessions', payload);
+    const data = response.data;
+    return {
+      ...data,
+      id: data.id || data.session_id,
+      latest_job: data.latest_job || data.job || data.active_job,
+    };
   },
 
   /**
@@ -219,13 +224,13 @@ export const researchService = {
                   text: 'Claimed accelerated revenue growth',
                   assessment: 'CONTRADICTED',
                   assessment_rationale:
-                    'Financial Times reports actual revenue growth was 14%, contradicting elevated claims.',
+                    'Audited BSE/NSE filings confirm operational revenue grew 22% to ₹463.3 crore, contradicting claims of contraction.',
                   evidence: [
                     {
                       evidence_id: 'ev-004a',
                       excerpt:
-                        'Acme Corp reported Q3 revenue growth of 14% year-over-year, falling short of analyst expectations.',
-                      source_id: 'src-i9j0k1l2',
+                        'C.E. Info Systems (MapmyIndia) audited financial statements confirm annual operational revenue rose 22% YoY to ₹463.3 crore with ~40% EBITDA margin.',
+                      source_id: 'src-mmi03',
                       relevance: 'CONTRADICTING',
                     },
                   ],
@@ -233,11 +238,11 @@ export const researchService = {
                   independent_origin_count: 1,
                   volatility: 'LOW',
                   is_stale: false,
-                  llm_confidence: 0.93,
+                  llm_confidence: 0.96,
                 },
               ],
               suggested_wording:
-                'Acme Corp delivered 14% YoY growth in Q3, missing market consensus of 18%, while margins contracted.',
+                'Contrary to assumptions of financial contraction, MapmyIndia reported a 22% YoY revenue growth to ₹463.3 crore with ~40% EBITDA margins, underpinned by an open order book of ₹1,500 crore.',
               needs_more_research: false,
             };
           }

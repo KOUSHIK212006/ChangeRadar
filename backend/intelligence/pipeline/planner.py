@@ -32,6 +32,7 @@ def plan(context: ResearchContext, llm: LLMProvider) -> ResearchPlan:
         f"Target: {context.target_name}\n"
         f"Target type: {context.target_type or 'unknown'}\n"
         f"Meeting objective: {context.meeting_objective}\n"
+        "Current Reference Date: November 21, 2026\n"
         f"Time window: last {context.time_window_days} days\n"
         f"Research questions:\n{questions_text}\n\n"
         "Return JSON:\n"

@@ -18,7 +18,7 @@ export const ResearchForm: React.FC = () => {
   const [targetName, setTargetName] = useState('');
   const [targetType, setTargetType] = useState('company');
   const [meetingContext, setMeetingContext] = useState('');
-  const [timeWindowDays, setTimeWindowDays] = useState(30);
+  const [timeWindowDays, setTimeWindowDays] = useState(14);
   const [scope, setScope] = useState<OwnershipScope>('PERSONAL');
   const [questions, setQuestions] = useState<string[]>(['']);
   const [talkingPoints, setTalkingPoints] = useState<string[]>(['']);
@@ -109,7 +109,7 @@ export const ResearchForm: React.FC = () => {
               required
               value={targetName}
               onChange={(e) => setTargetName(e.target.value)}
-              placeholder="e.g. Acme Corp, Dr. Elena Rostova, Autonomous Vehicles"
+              placeholder="e.g. MapmyIndia (C.E. Info Systems), Kaynes Technology, Zepto"
               className="radar-input w-full text-base font-medium"
             />
           </div>
@@ -148,7 +148,7 @@ export const ResearchForm: React.FC = () => {
             rows={3}
             value={meetingContext}
             onChange={(e) => setMeetingContext(e.target.value)}
-            placeholder="e.g. Commercial partnership discussion with VP of Global Strategy; reviewing recent APAC expansion and Q3 margin performance."
+            placeholder="e.g. Commercial partnership discussion with Leadership; evaluating Q3/Q4 revenue growth, IoT expansion, and Ola Maps legal dispute."
             className="radar-input w-full resize-none text-sm"
           />
           <p className="text-xs text-text-muted">
@@ -253,7 +253,7 @@ export const ResearchForm: React.FC = () => {
                 type="text"
                 value={q}
                 onChange={(e) => handleQuestionChange(idx, e.target.value)}
-                placeholder={`e.g. Any updates on executive departures or leadership turnover?`}
+                placeholder={`e.g. What is the verified status of the Ola Maps intellectual property dispute?`}
                 className="radar-input flex-1 text-xs"
               />
               {questions.length > 1 && (
@@ -299,7 +299,7 @@ export const ResearchForm: React.FC = () => {
                 type="text"
                 value={tp}
                 onChange={(e) => handleTalkingPointChange(idx, e.target.value)}
-                placeholder={`e.g. Acme Corp achieved 20% revenue growth in Q3`}
+                placeholder={`e.g. MapmyIndia revenue collapsed after losing Ola as an enterprise customer`}
                 className="radar-input flex-1 text-xs"
               />
               {talkingPoints.length > 1 && (

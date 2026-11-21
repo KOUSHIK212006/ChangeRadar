@@ -121,6 +121,38 @@ def test_tavily_search_success_and_normalization():
     assert r1.publisher == "venturebeat.com"
 
 
+def test_tavily_rfc2822_date_parsing_and_temporal_filtering():
+    """Verify Tavily handles RFC 2822 dates and includes temporal parameters (days/topic)."""
+    fake_response = {
+        "results": [
+            {
+                "title": "MapmyIndia Mappls links up with Zoho Arattai",
+                "url": "https://www.tradingview.com/news/mapmyindia-zoho-arattai",
+                "content": "MapmyIndia partnered with Zoho for in-chat location sharing...",
+                "published_date": "Tue, 17 Nov 2026 08:35:46 GMT",
+                "score": 0.95,
+            }
+        ]
+    }
+    provider = TavilySearchProvider(api_key="tvly-mock-test-key", max_results=3)
+    context = ResearchContext(target_name="MapmyIndia", meeting_objective="Partnership", time_window_days=14)
+
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = fake_response
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch("httpx.post", return_value=mock_resp) as mock_post:
+        records = provider.search("MapmyIndia news", context)
+        mock_post.assert_called_once()
+        call_kwargs = mock_post.call_args[1]
+        assert call_kwargs["json"]["topic"] == "news"
+        assert call_kwargs["json"]["days"] == 14
+
+    assert len(records) == 1
+    assert records[0].published_at == datetime(2026, 11, 17, 8, 35, 46, tzinfo=timezone.utc)
+
+
 def test_tavily_rate_limit_retry_and_recovery():
     """Verify HTTP 429 triggers exponential backoff retry and succeeds upon recovery."""
     provider = TavilySearchProvider(

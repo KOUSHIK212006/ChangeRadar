@@ -232,7 +232,8 @@ class GeminiLLMProvider(BaseLLMProvider):
         )
 
     def _call_api(self, system_prompt: str, user_prompt: str) -> Tuple[str, int, int]:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model}:generateContent?key={self._api_key}"
+        clean_model = self._model.removeprefix("models/").removeprefix("gemini/")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={self._api_key}"
 
         payload = {
             "contents": [
@@ -478,6 +479,14 @@ class BifrostLLMProvider(BaseLLMProvider):
         except (QuotaExhaustedError, PermanentLLMError, TransientLLMError, LLMParseError):
             raise
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            if self._upstream_key:
+                logger.warning(
+                    f"Bifrost gateway unreachable at '{self._base_url}' ({exc}). "
+                    "Failing over to upstream Gemini provider to preserve live intelligence execution."
+                )
+                direct_model = self._model.removeprefix("models/").removeprefix("gemini/")
+                direct_provider = GeminiLLMProvider(api_key=self._upstream_key, model=direct_model)
+                return direct_provider._call_api(system_prompt, user_prompt)
             raise TransientLLMError(f"Bifrost gateway network error: {exc}") from exc
         except Exception as exc:
             raise TransientLLMError(f"Unexpected error communicating with Bifrost gateway: {exc}") from exc

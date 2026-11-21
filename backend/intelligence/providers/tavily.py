@@ -42,6 +42,30 @@ def _parse_publisher(url: str) -> str:
     return host.removeprefix("www.")
 
 
+def _parse_published_date(raw_date: Optional[str]) -> Optional[datetime]:
+    """Parse publication date supporting ISO 8601 and RFC 2822 / HTTP formats."""
+    if not raw_date:
+        return None
+    # 1. Try ISO 8601
+    try:
+        dt = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except (ValueError, AttributeError):
+        pass
+    # 2. Try RFC 2822 (e.g. 'Tue, 17 Nov 2026 08:35:46 GMT', 'Fri, 13 Nov 2026 13:00:00 GMT')
+    try:
+        from email.utils import parsedate_to_datetime
+        dt = parsedate_to_datetime(raw_date)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        pass
+    return None
+
+
 class TavilySearchProvider(SearchProvider):
     def __init__(
         self,
@@ -63,7 +87,7 @@ class TavilySearchProvider(SearchProvider):
         if not self._api_key:
             raise SearchProviderError("TAVILY_API_KEY is not configured in environment or .env.")
 
-        payload = {
+        payload: dict = {
             "api_key": self._api_key,
             "query": query,
             "search_depth": "advanced",
@@ -71,6 +95,11 @@ class TavilySearchProvider(SearchProvider):
             "include_raw_content": False,
             "max_results": self._max_results,
         }
+
+        # Temporal filtering: Tavily supports 'days' when 'topic' is 'news'
+        if context.time_window_days:
+            payload["topic"] = "news"
+            payload["days"] = context.time_window_days
 
         last_exc: Optional[Exception] = None
 
@@ -133,6 +162,16 @@ class TavilySearchProvider(SearchProvider):
 
                 response.raise_for_status()
                 data = response.json()
+
+                # If news search returned 0 results, fall back to general search
+                if not data.get("results") and payload.get("topic") == "news":
+                    logger.info("Tavily news topic returned 0 results; retrying with general topic.")
+                    fallback_payload = dict(payload)
+                    fallback_payload["topic"] = "general"
+                    fallback_payload.pop("days", None)
+                    fb_resp = httpx.post(TAVILY_SEARCH_URL, json=fallback_payload, timeout=self._timeout)
+                    if fb_resp.status_code == 200:
+                        data = fb_resp.json()
                 break
 
             except (SearchProviderError,):
@@ -170,11 +209,9 @@ class TavilySearchProvider(SearchProvider):
             published_at: datetime | None = None
 
             raw_date = item.get("published_date")
-            if raw_date:
-                try:
-                    published_at = datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
-                except ValueError:
-                    logger.warning(f"Could not parse published_date '{raw_date}' for {url}")
+            published_at = _parse_published_date(raw_date)
+            if raw_date and not published_at:
+                logger.warning(f"Could not parse published_date '{raw_date}' for {url}")
 
             records.append(
                 SourceRecord(
